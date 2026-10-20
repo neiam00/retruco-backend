@@ -1,4 +1,4 @@
-// upload-assets publishes the reviewed SVG deck to an existing B2 bucket.
+// upload-assets publishes the generated WebP deck to an existing B2 bucket.
 // It is an explicit deployment command; the game server never uploads assets.
 package main
 
@@ -33,12 +33,12 @@ func run() error {
 		return errors.New("B2_APPLICATION_KEY_ID, B2_APPLICATION_KEY and B2_BUCKET_NAME are required")
 	}
 
-	files, err := filepath.Glob(filepath.Join(os.Args[1], "*.svg"))
+	files, err := filepath.Glob(filepath.Join(os.Args[1], "*.webp"))
 	if err != nil {
 		return err
 	}
 	if len(files) != 41 {
-		return fmt.Errorf("expected the 40-card deck and one back; found %d SVGs", len(files))
+		return fmt.Errorf("expected the 40-card deck and one back; found %d WebP images", len(files))
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
@@ -60,7 +60,7 @@ func run() error {
 }
 
 func upload(ctx context.Context, bucket *b2.Bucket, path string) error {
-	// #nosec G304 G703 -- This operator-run CLI reads SVGs from the directory explicitly selected by the operator.
+	// #nosec G304 G703 -- This operator-run CLI reads WebP images from the directory explicitly selected by the operator.
 	file, err := os.Open(path)
 	if err != nil {
 		return err
@@ -71,7 +71,7 @@ func upload(ctx context.Context, bucket *b2.Bucket, path string) error {
 	defer cancel()
 	object := bucket.Object("cards/" + filepath.Base(path))
 	writer := object.NewWriter(uploadContext, b2.WithAttrsOption(&b2.Attrs{
-		ContentType: "image/svg+xml",
+		ContentType: "image/webp",
 		Info:        map[string]string{"b2-cache-control": "public, max-age=86400"},
 	}))
 	if _, err := io.Copy(writer, file); err != nil {

@@ -154,8 +154,11 @@ only in the operator's shell, then run:
 go run ./cmd/upload-assets ../frontend/static/cards
 ```
 
-The SDK uploader expects the 40-card SVG deck and one back, writes `cards/*`,
-and preserves SVG content types. It may replace an existing object version.
+Run `pnpm cards:build` in the frontend after editing its `artwork/cards/*.svg` sources.
+The SDK uploader expects the 40 generated WebP faces and one back, writes
+`cards/*`, and sets `image/webp`. Upload these files before deploying a frontend
+that references their content-hashed filenames. Older object versions can remain
+available for clients still using the previous deployment.
 Keep the upstream attribution accessible alongside the deployed app. Configure
 the frontend's public `CARD_ASSET_ORIGIN` with the bucket/CDN origin and rebuild.
 Leave it empty to serve the bundled assets. Never place B2 keys in the frontend.
