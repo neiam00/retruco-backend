@@ -1,0 +1,133 @@
+package game_test
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"log/slog"
+	"testing"
+
+	"github.com/neiam00/retruco-backend/internal/game"
+	"github.com/neiam00/retruco-backend/internal/store"
+	"github.com/neiam00/retruco-backend/rules"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+type memoryRepository struct {
+	payloads map[string][]byte
+	fail     bool
+}
+
+func (repository *memoryRepository) SaveMatch(_ context.Context, code string, payload []byte, _ bool, _ []string) error {
+	if repository.fail {
+		return errors.New("storage unavailable")
+	}
+	repository.payloads[code] = append([]byte(nil), payload...)
+	return nil
+}
+
+func (repository *memoryRepository) ActiveMatches(context.Context) ([][]byte, error) {
+	var payloads [][]byte
+	for _, payload := range repository.payloads {
+		payloads = append(payloads, append([]byte(nil), payload...))
+	}
+	return payloads, nil
+}
+
+func newHost(t *testing.T, private bool) (*game.Host, *memoryRepository, string, []store.User) {
+	t.Helper()
+	repository := &memoryRepository{payloads: make(map[string][]byte)}
+	host := game.New(repository, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	players := []store.User{
+		{ID: "ana", Name: "Ana"},
+		{ID: "beto", Name: "Beto"},
+		{ID: "carla", Name: "Carla"},
+		{ID: "diego", Name: "Diego"},
+	}
+	code, err := host.Create(t.Context(), players[0], rules.Config{Players: 4, Target: 12}, private)
+	require.NoError(t, err)
+	for _, player := range players[1:] {
+		require.NoError(t, host.Join(t.Context(), code, player))
+	}
+	return host, repository, code, players
+}
+
+func cut(t *testing.T, host *game.Host, code string, players []store.User) game.Snapshot {
+	t.Helper()
+	view, err := host.Snapshot(code, players[0].ID, 0)
+	require.NoError(t, err)
+	input := game.Input{ID: "cut", Revision: view.State.Revision, Command: rules.Command{Type: "cut", Cut: 19}}
+	require.NoError(t, host.Handle(t.Context(), code, players[view.State.Turn], input))
+	view, err = host.Snapshot(code, players[0].ID, 0)
+	require.NoError(t, err)
+	return view
+}
+
+func TestSpectatorAndSignalViewsRespectTheSelectedPlayer(t *testing.T) {
+	host, _, code, players := newHost(t, true)
+	assert.Empty(t, host.List(), "private matches are absent from the public browser")
+	cut(t, host, code, players)
+	require.NoError(t, host.Handle(t.Context(), code, players[0], game.Input{ID: "signal", Signal: "receta"}))
+	for seat, player := range players {
+		playerView, err := host.Snapshot(code, player.ID, (seat+1)%4)
+		require.NoError(t, err)
+		spectatorView, err := host.Snapshot(code, "spectator", seat)
+		require.NoError(t, err)
+		assert.Equal(t, seat, playerView.Perspective, "seated users cannot select an opponent's hand")
+		assert.Equal(t, playerView.State.Hand, spectatorView.State.Hand)
+		assert.Equal(t, playerView.Signals, spectatorView.Signals, "no new visibility rolls for spectators")
+		assert.Empty(t, spectatorView.State.Legal)
+		if seat%2 == 0 {
+			require.Len(t, playerView.Signals, 1, "both teammates always see a signal, including bluffs")
+		}
+		payload, err := json.Marshal(spectatorView)
+		require.NoError(t, err)
+		assert.NotContains(t, string(payload), "Visible", "recipient decisions are never sent to clients")
+	}
+	err := host.Handle(t.Context(), code, store.User{ID: "spectator"}, game.Input{ID: "illegal", Command: rules.Command{Type: "play"}})
+	require.Error(t, err)
+}
+
+func TestDuplicateCommandsAndReconnectDoNotResetTheClock(t *testing.T) {
+	host, repository, code, players := newHost(t, false)
+	view := cut(t, host, code, players)
+	turn := view.State.Turn
+	input := game.Input{ID: "first-card", Revision: view.State.Revision, Command: rules.Command{Type: "play", Card: 0}}
+	require.NoError(t, host.Handle(t.Context(), code, players[turn], input))
+	after, err := host.Snapshot(code, players[turn].ID, turn)
+	require.NoError(t, err)
+	require.NoError(t, host.Handle(t.Context(), code, players[turn], input))
+	reconnected, err := host.Snapshot(code, players[turn].ID, turn)
+	require.NoError(t, err)
+	assert.Equal(t, after.State.Revision, reconnected.State.Revision)
+	assert.Equal(t, after.Deadline, reconnected.Deadline)
+
+	restored := game.New(repository, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	require.NoError(t, restored.Restore(t.Context()))
+	restarted, err := restored.Snapshot(code, players[turn].ID, turn)
+	require.NoError(t, err)
+	assert.Equal(t, after.State, restarted.State)
+	assert.True(t, after.Deadline.Equal(restarted.Deadline))
+
+	input.ID = "stale-command"
+	require.Error(t, host.Handle(t.Context(), code, players[turn], input))
+}
+
+func TestPersistenceFailureDoesNotPublishAnUncommittedMove(t *testing.T) {
+	host, repository, code, players := newHost(t, false)
+	before := cut(t, host, code, players)
+	repository.fail = true
+	err := host.Handle(t.Context(), code, players[before.State.Turn], game.Input{
+		ID:       "failed-card",
+		Revision: before.State.Revision,
+		Command:  rules.Command{Type: "play", Card: 0},
+	})
+	require.Error(t, err)
+	after, snapshotErr := host.Snapshot(code, players[0].ID, 0)
+	require.NoError(t, snapshotErr)
+	assert.Equal(t, before.State, after.State)
+	assert.Equal(t, before.Deadline, after.Deadline)
+	assert.Equal(t, before.Sequence, after.Sequence)
+}

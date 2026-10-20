@@ -1,0 +1,125 @@
+package store
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+type User struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	Registered bool   `json:"registered"`
+}
+
+type Postgres struct{ pool *pgxpool.Pool }
+
+func New(pool *pgxpool.Pool) *Postgres { return &Postgres{pool: pool} }
+
+func (p *Postgres) CreateUser(ctx context.Context, user User, username, hash string) error {
+	_, err := p.pool.Exec(ctx, `INSERT INTO users(id,name,username,password_hash) VALUES($1,$2,NULLIF($3,''),NULLIF($4,''))`, user.ID, user.Name, username, hash)
+	return err
+}
+
+func (p *Postgres) Credentials(ctx context.Context, username string) (User, string, error) {
+	var user User
+	var hash string
+	err := p.pool.QueryRow(ctx, `SELECT id,name,password_hash FROM users WHERE username=$1`, username).Scan(&user.ID, &user.Name, &hash)
+	user.Registered = true
+	return user, hash, err
+}
+
+func (p *Postgres) CreateSession(ctx context.Context, hash, userID string, expires time.Time) error {
+	_, err := p.pool.Exec(ctx, `INSERT INTO sessions(token_hash,user_id,expires_at) VALUES($1,$2,$3)`, hash, userID, expires)
+	return err
+}
+
+func (p *Postgres) Session(ctx context.Context, hash string) (User, error) {
+	var user User
+	err := p.pool.QueryRow(ctx, `SELECT u.id,u.name,u.username IS NOT NULL FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=$1 AND s.expires_at>now()`, hash).Scan(&user.ID, &user.Name, &user.Registered)
+	return user, err
+}
+
+func (p *Postgres) DeleteSession(ctx context.Context, hash string) error {
+	_, err := p.pool.Exec(ctx, `DELETE FROM sessions WHERE token_hash=$1`, hash)
+	return err
+}
+
+func (p *Postgres) SaveMatch(ctx context.Context, code string, payload []byte, finished bool, members []string) error {
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		// Rollback is best-effort cleanup and is also called after a successful commit.
+		_ = tx.Rollback(ctx)
+	}()
+	if _, err = tx.Exec(ctx, `INSERT INTO matches(code,payload,finished) VALUES($1,$2,$3) ON CONFLICT(code) DO UPDATE SET payload=excluded.payload,finished=excluded.finished,updated_at=now()`, code, payload, finished); err != nil {
+		return err
+	}
+	for _, member := range members {
+		if _, err = tx.Exec(ctx, `INSERT INTO match_members(match_code,user_id) VALUES($1,$2) ON CONFLICT DO NOTHING`, code, member); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
+}
+
+func (p *Postgres) ActiveMatches(ctx context.Context) ([][]byte, error) {
+	rows, err := p.pool.Query(ctx, `SELECT payload FROM matches WHERE NOT finished ORDER BY updated_at LIMIT 1000`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var result [][]byte
+	for rows.Next() {
+		var payload []byte
+		if err := rows.Scan(&payload); err != nil {
+			return nil, err
+		}
+		result = append(result, payload)
+	}
+	return result, rows.Err()
+}
+
+type HistoryEntry struct {
+	Code      string    `json:"code"`
+	Scores    [2]int    `json:"scores"`
+	Winner    int       `json:"winner"`
+	Finished  bool      `json:"finished"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+func (p *Postgres) History(ctx context.Context, userID string) ([]HistoryEntry, error) {
+	rows, err := p.pool.Query(ctx, `SELECT m.code,m.payload,m.finished,m.updated_at FROM matches m JOIN match_members mm ON mm.match_code=m.code WHERE mm.user_id=$1 ORDER BY m.updated_at DESC LIMIT 50`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := []HistoryEntry{}
+	for rows.Next() {
+		var entry HistoryEntry
+		var payload []byte
+		if err := rows.Scan(&entry.Code, &payload, &entry.Finished, &entry.UpdatedAt); err != nil {
+			return nil, err
+		}
+		var match struct {
+			State *struct {
+				Scores [2]int
+				Winner int
+			}
+		}
+		if err := json.Unmarshal(payload, &match); err != nil {
+			return nil, fmt.Errorf("decode match history: %w", err)
+		}
+		entry.Winner = -1
+		if match.State != nil {
+			entry.Scores, entry.Winner = match.State.Scores, match.State.Winner
+		}
+		result = append(result, entry)
+	}
+	return result, rows.Err()
+}

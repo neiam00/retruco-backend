@@ -1,0 +1,524 @@
+package api
+
+import (
+	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"net"
+	"net/http"
+	"regexp"
+	"strings"
+	"sync"
+	"time"
+	"unicode/utf8"
+
+	"github.com/coder/websocket"
+	"github.com/coder/websocket/wsjson"
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+	"golang.org/x/crypto/bcrypt"
+
+	"github.com/neiam00/retruco-backend/internal/game"
+	"github.com/neiam00/retruco-backend/internal/store"
+	"github.com/neiam00/retruco-backend/rules"
+)
+
+type Repository interface {
+	CreateUser(context.Context, store.User, string, string) error
+	Credentials(context.Context, string) (store.User, string, error)
+	CreateSession(context.Context, string, string, time.Time) error
+	Session(context.Context, string) (store.User, error)
+	DeleteSession(context.Context, string) error
+	History(context.Context, string) ([]store.HistoryEntry, error)
+}
+
+type Config struct {
+	Origins       []string
+	SecureCookies bool
+}
+
+type Server struct {
+	config    Config
+	store     Repository
+	host      *game.Host
+	log       *slog.Logger
+	ctx       context.Context
+	dummyHash []byte
+	limitsMu  sync.Mutex
+	limits    map[string]window
+}
+
+type window struct {
+	start time.Time
+	count int
+}
+
+func New(ctx context.Context, config Config, repository Repository, host *game.Host, log *slog.Logger) (*Server, error) {
+	hash, err := bcrypt.GenerateFromPassword([]byte("unused-login-timing-placeholder"), 12)
+	if err != nil {
+		return nil, err
+	}
+	return &Server{config: config, store: repository, host: host, log: log, ctx: ctx, dummyHash: hash, limits: map[string]window{}}, nil
+}
+
+func (s *Server) Handler() http.Handler {
+	r := chi.NewRouter()
+	r.Use(middleware.RequestID, middleware.Recoverer, s.security)
+	r.Get("/api/health", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, 200, map[string]string{"status": "ok", "rulesVersion": rules.Version})
+	})
+	r.Get("/api/session", s.session)
+	r.Post("/api/guest", s.guest)
+	r.Post("/api/register", s.register)
+	r.Post("/api/login", s.login)
+	r.Post("/api/logout", s.logout)
+	r.Get("/api/history", s.history)
+	r.Get("/api/matches", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, s.host.List()) })
+	r.Post("/api/matches", s.createMatch)
+	r.Get("/api/matches/{code}", s.matchSnapshot)
+	r.Post("/api/matches/{code}/join", s.joinMatch)
+	r.Get("/api/matches/{code}/ws", s.socket)
+	return r
+}
+
+func (s *Server) allowedOrigin(origin string) bool {
+	for _, allowed := range s.config.Origins {
+		if origin == allowed {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Server) security(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Referrer-Policy", "same-origin")
+		origin := r.Header.Get("Origin")
+		if origin != "" {
+			if !s.allowedOrigin(origin) {
+				fail(w, 403, "Origen no permitido.")
+				return
+			}
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
+			w.Header().Add("Vary", "Origin")
+		}
+		if r.Method == http.MethodOptions {
+			if origin == "" {
+				fail(w, 403, "Origen requerido.")
+				return
+			}
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		// Origin validation covers every mutation, including login/guest creation.
+		if r.Method == http.MethodPost && (origin == "" || !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json")) {
+			fail(w, 403, "Solicitud no permitida.")
+			return
+		}
+		ip, _, err := net.SplitHostPort(r.RemoteAddr)
+		if err != nil {
+			ip = r.RemoteAddr
+		}
+		limit := 120
+		if r.URL.Path == "/api/login" || r.URL.Path == "/api/register" || r.URL.Path == "/api/guest" {
+			limit = 10
+		}
+		if !s.allow(ip+":"+r.URL.Path, limit) {
+			w.Header().Set("Retry-After", "60")
+			fail(w, 429, "Demasiadas solicitudes. Intenta en un minuto.")
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 8192)
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (s *Server) allow(key string, maximum int) bool {
+	s.limitsMu.Lock()
+	defer s.limitsMu.Unlock()
+	now := time.Now()
+	for id, w := range s.limits {
+		if now.Sub(w.start) >= time.Minute {
+			delete(s.limits, id)
+		}
+	}
+	entry := s.limits[key]
+	if entry.start.IsZero() {
+		if len(s.limits) >= 10000 {
+			return false
+		}
+		entry.start = now
+	}
+	entry.count++
+	s.limits[key] = entry
+	return entry.count <= maximum
+}
+
+func decode(r *http.Request, target any) error {
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return err
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return fmt.Errorf("unexpected trailing body")
+	}
+	return nil
+}
+
+func writeJSON(w http.ResponseWriter, status int, value any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(value)
+}
+
+func fail(w http.ResponseWriter, status int, message string) {
+	writeJSON(w, status, map[string]string{"error": message})
+}
+
+func token() string { return rand.Text() }
+func digest(value string) string {
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:])
+}
+
+func (s *Server) authenticate(r *http.Request) (store.User, error) {
+	cookie, err := r.Cookie("retruco_session")
+	if err != nil {
+		return store.User{}, err
+	}
+	return s.store.Session(r.Context(), digest(cookie.Value))
+}
+
+func (s *Server) requireUser(w http.ResponseWriter, r *http.Request) (store.User, bool) {
+	user, err := s.authenticate(r)
+	if err != nil {
+		fail(w, 401, "Entra con tu nombre para continuar.")
+		return store.User{}, false
+	}
+	return user, true
+}
+
+func (s *Server) setSession(w http.ResponseWriter, r *http.Request, user store.User) {
+	value := token()
+	expires := time.Now().Add(30 * 24 * time.Hour)
+	if err := s.store.CreateSession(r.Context(), digest(value), user.ID, expires); err != nil {
+		s.internalError(w, err)
+		return
+	}
+	// #nosec G124 -- Secure is deployment-configured to support local HTTP development; production enables SecureCookies.
+	http.SetCookie(w, &http.Cookie{Name: "retruco_session", Value: value, Path: "/", Expires: expires, MaxAge: 30 * 24 * 3600, HttpOnly: true, Secure: s.config.SecureCookies, SameSite: http.SameSiteLaxMode})
+	writeJSON(w, 200, user)
+}
+
+func (s *Server) session(w http.ResponseWriter, r *http.Request) {
+	user, err := s.authenticate(r)
+	if errors.Is(err, http.ErrNoCookie) || errors.Is(err, pgx.ErrNoRows) {
+		writeJSON(w, 200, nil)
+		return
+	}
+	if err != nil {
+		s.internalError(w, err)
+		return
+	}
+	writeJSON(w, 200, user)
+}
+
+func (s *Server) guest(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Name string `json:"name"`
+	}
+	if decode(r, &input) != nil {
+		fail(w, 400, "Nombre inválido.")
+		return
+	}
+	input.Name = strings.TrimSpace(input.Name)
+	if utf8.RuneCountInString(input.Name) < 2 || utf8.RuneCountInString(input.Name) > 24 {
+		fail(w, 400, "Usa un nombre de 2 a 24 caracteres.")
+		return
+	}
+	user := store.User{ID: token(), Name: input.Name}
+	if err := s.store.CreateUser(r.Context(), user, "", ""); err != nil {
+		s.internalError(w, err)
+		return
+	}
+	s.setSession(w, r, user)
+}
+
+var usernamePattern = regexp.MustCompile(`^[a-z0-9_]{3,24}$`)
+
+type credentials struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+func (s *Server) register(w http.ResponseWriter, r *http.Request) {
+	var input credentials
+	if decode(r, &input) != nil {
+		fail(w, 400, "Datos inválidos.")
+		return
+	}
+	input.Username = strings.ToLower(strings.TrimSpace(input.Username))
+	if !usernamePattern.MatchString(input.Username) || len(input.Password) < 10 || len(input.Password) > 72 {
+		fail(w, 400, "Usa 3–24 letras, números o guiones bajos y una contraseña de 10–72 bytes.")
+		return
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(input.Password), 12)
+	if err != nil {
+		s.internalError(w, err)
+		return
+	}
+	user := store.User{ID: token(), Name: input.Username, Registered: true}
+	if err := s.store.CreateUser(r.Context(), user, input.Username, string(hash)); err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			fail(w, 409, "Ese nombre de usuario ya está ocupado.")
+			return
+		}
+		s.internalError(w, err)
+		return
+	}
+	s.setSession(w, r, user)
+}
+
+func (s *Server) login(w http.ResponseWriter, r *http.Request) {
+	var input credentials
+	if decode(r, &input) != nil || len(input.Password) > 72 {
+		fail(w, 400, "Datos inválidos.")
+		return
+	}
+	user, hash, err := s.store.Credentials(r.Context(), strings.ToLower(strings.TrimSpace(input.Username)))
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		s.internalError(w, err)
+		return
+	}
+	if err != nil {
+		hash = string(s.dummyHash)
+	}
+	if compareErr := bcrypt.CompareHashAndPassword([]byte(hash), []byte(input.Password)); compareErr != nil || err != nil {
+		fail(w, 401, "Nombre o contraseña incorrectos.")
+		return
+	}
+	s.setSession(w, r, user)
+}
+
+func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
+	if cookie, err := r.Cookie("retruco_session"); err == nil {
+		if err := s.store.DeleteSession(r.Context(), digest(cookie.Value)); err != nil {
+			s.internalError(w, err)
+			return
+		}
+	}
+	// #nosec G124 -- Cookie deletion preserves the deployment-configured Secure setting used when issuing the cookie.
+	http.SetCookie(w, &http.Cookie{Name: "retruco_session", Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: s.config.SecureCookies, SameSite: http.SameSiteLaxMode})
+	writeJSON(w, 200, map[string]bool{"ok": true})
+}
+
+func (s *Server) history(w http.ResponseWriter, r *http.Request) {
+	user, ok := s.requireUser(w, r)
+	if !ok {
+		return
+	}
+	if !user.Registered {
+		fail(w, 403, "Crea una cuenta para guardar tu historial.")
+		return
+	}
+	history, err := s.store.History(r.Context(), user.ID)
+	if err != nil {
+		s.internalError(w, err)
+		return
+	}
+	writeJSON(w, 200, history)
+}
+
+func (s *Server) createMatch(w http.ResponseWriter, r *http.Request) {
+	user, ok := s.requireUser(w, r)
+	if !ok {
+		return
+	}
+	var input struct {
+		Private bool         `json:"private"`
+		Config  rules.Config `json:"config"`
+	}
+	if decode(r, &input) != nil {
+		fail(w, 400, "Configuración inválida.")
+		return
+	}
+	code, err := s.host.Create(r.Context(), user, input.Config, input.Private)
+	if err != nil {
+		fail(w, 400, "No se pudo crear la mesa. Revisa la configuración.")
+		s.log.Error("create match", "error", err)
+		return
+	}
+	writeJSON(w, 201, map[string]string{"code": code})
+}
+
+func (s *Server) joinMatch(w http.ResponseWriter, r *http.Request) {
+	user, ok := s.requireUser(w, r)
+	if !ok {
+		return
+	}
+	code := strings.ToUpper(chi.URLParam(r, "code"))
+	if err := s.host.Join(r.Context(), code, user); err != nil {
+		fail(w, 409, err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]string{"code": code})
+}
+
+func (s *Server) matchSnapshot(w http.ResponseWriter, r *http.Request) {
+	user, ok := s.requireUser(w, r)
+	if !ok {
+		return
+	}
+	code := strings.ToUpper(chi.URLParam(r, "code"))
+	snapshot, err := s.host.Snapshot(code, user.ID, 0)
+	if err != nil {
+		fail(w, http.StatusNotFound, "No encontramos esa mesa. Revisa el código.")
+		return
+	}
+	writeJSON(w, http.StatusOK, snapshot)
+}
+
+func (s *Server) internalError(w http.ResponseWriter, err error) {
+	s.log.Error("request failed", "error", err)
+	fail(w, 500, "Ocurrió un error. Inténtalo de nuevo.")
+}
+
+func (s *Server) socket(w http.ResponseWriter, r *http.Request) {
+	user, ok := s.requireUser(w, r)
+	if !ok {
+		return
+	}
+	if !s.allowedOrigin(r.Header.Get("Origin")) {
+		fail(w, 403, "Origen no permitido.")
+		return
+	}
+	code := strings.ToUpper(chi.URLParam(r, "code"))
+	if _, err := s.host.Snapshot(code, user.ID, 0); err != nil {
+		fail(w, 404, err.Error())
+		return
+	}
+	// Exact origins were checked above; the library's same-host check remains
+	// useful, and configured cross-origin hosts are passed explicitly.
+	origins := make([]string, 0, len(s.config.Origins))
+	for _, origin := range s.config.Origins {
+		origins = append(origins, strings.TrimPrefix(strings.TrimPrefix(origin, "https://"), "http://"))
+	}
+	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{OriginPatterns: origins})
+	if err != nil {
+		return
+	}
+	defer func() {
+		// The connection may already have closed normally or due to a peer disconnect.
+		_ = conn.CloseNow()
+	}()
+	conn.SetReadLimit(8192)
+	ctx, cancel := context.WithCancel(s.ctx)
+	defer cancel()
+	updates, unsubscribe := s.host.Subscribe(code)
+	defer unsubscribe()
+	type message struct {
+		Input       game.Input `json:"input"`
+		Perspective *int       `json:"perspective,omitempty"`
+	}
+	incoming := make(chan message, 8)
+	go func() {
+		defer cancel()
+		for {
+			var msg message
+			if wsjson.Read(ctx, conn, &msg) != nil {
+				return
+			}
+			select {
+			case incoming <- msg:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	perspective := 0
+	send := func(value any) error {
+		writeCtx, done := context.WithTimeout(ctx, 5*time.Second)
+		defer done()
+		return wsjson.Write(writeCtx, conn, value)
+	}
+	snapshot := func() error {
+		current, err := s.authenticate(r)
+		if err != nil || current.ID != user.ID {
+			return fmt.Errorf("session expired")
+		}
+		value, err := s.host.Snapshot(code, user.ID, perspective)
+		if err != nil {
+			return err
+		}
+		return send(map[string]any{"type": "snapshot", "data": value})
+	}
+	if snapshot() != nil {
+		return
+	}
+	heartbeat := time.NewTicker(25 * time.Second)
+	defer heartbeat.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-heartbeat.C:
+			current, err := s.authenticate(r)
+			if err != nil || current.ID != user.ID {
+				return
+			}
+			pingContext, cancelPing := context.WithTimeout(ctx, 5*time.Second)
+			err = conn.Ping(pingContext)
+			cancelPing()
+			if err != nil {
+				return
+			}
+		case <-updates:
+			if snapshot() != nil {
+				return
+			}
+		case msg := <-incoming:
+			// Recheck the session for each incoming action, so logout revokes it.
+			current, err := s.authenticate(r)
+			if err != nil || current.ID != user.ID {
+				_ = conn.Close(websocket.StatusPolicyViolation, "Sesión finalizada")
+				return
+			}
+			if !s.allow("ws:"+user.ID, 120) {
+				if send(map[string]string{"type": "error", "error": "Espera un momento antes de volver a intentar."}) != nil {
+					return
+				}
+				continue
+			}
+			if msg.Perspective != nil {
+				perspective = *msg.Perspective
+				if snapshot() != nil {
+					return
+				}
+				continue
+			}
+			if err := s.host.Handle(ctx, code, user, msg.Input); err != nil {
+				if send(map[string]string{"type": "error", "error": err.Error()}) != nil {
+					return
+				}
+				if snapshot() != nil {
+					return
+				}
+			}
+		}
+	}
+}
