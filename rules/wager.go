@@ -79,6 +79,13 @@ func (s *State) respond(seat int, c Command) error {
 	}
 	wager := *s.Pending
 	team := s.Team(seat)
+	choosesLey := wager.Kind == "ley_envido" && wager.Mode == "" &&
+		(c.Kind == "accept" || c.Kind == "raise" || c.Kind == "falta")
+	// LegalActions uses this validation too, so irrelevant modes must be
+	// rejected rather than producing duplicate replies with different labels.
+	if c.Mode != "" && !choosesLey {
+		return fmt.Errorf("this response does not choose a ley mode")
+	}
 	if c.Kind == "flowers_no" {
 		if wager.Kind != "envido" || !s.Players[seat].FlorValid || s.Players[seat].Holding.Receta {
 			return fmt.Errorf("no ordinary flor to block envido")
