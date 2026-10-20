@@ -1,0 +1,19 @@
+services:
+  api:
+    environment:
+      ALLOWED_ORIGINS: https://retru.co.ve
+      COOKIE_SECURE: "true"
+      API_PROXY_SECRET: ${API_PROXY_SECRET:?Set API_PROXY_SECRET in both API and Cloudflare Pages}
+  proxy:
+    image: nginx:stable-alpine
+    environment:
+      BACKEND_HOST: ${BACKEND_HOST:?Set the backend origin hostname}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/nginx.conf.template:/etc/nginx/templates/default.conf.template:ro
+      - ${TLS_CERT_DIR:?Set the certificate directory}:/etc/nginx/tls:ro
+    depends_on:
+      - api
+    restart: unless-stopped

@@ -54,7 +54,11 @@ func run(log *slog.Logger) error {
 	for i := range origins {
 		origins[i] = strings.TrimSpace(origins[i])
 	}
-	server, err := api.New(ctx, api.Config{Origins: origins, SecureCookies: env("COOKIE_SECURE", "true") == "true"}, repository, host, log)
+	server, err := api.New(ctx, api.Config{
+		Origins:       origins,
+		SecureCookies: env("COOKIE_SECURE", "true") == "true",
+		ProxySecret:   os.Getenv("API_PROXY_SECRET"),
+	}, repository, host, log)
 	if err != nil {
 		return err
 	}

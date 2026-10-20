@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -43,6 +44,7 @@ type Repository interface {
 type Config struct {
 	Origins       []string
 	SecureCookies bool
+	ProxySecret   string
 }
 
 type Server struct {
@@ -103,6 +105,12 @@ func (s *Server) security(next http.Handler) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Referrer-Policy", "same-origin")
+		if s.config.ProxySecret != "" && subtle.ConstantTimeCompare(
+			[]byte(r.Header.Get("X-Retruco-Proxy-Secret")), []byte(s.config.ProxySecret),
+		) != 1 {
+			fail(w, http.StatusForbidden, "Solicitud no permitida.")
+			return
+		}
 		origin := r.Header.Get("Origin")
 		if origin != "" {
 			if !s.allowedOrigin(origin) {
@@ -131,6 +139,13 @@ func (s *Server) security(next http.Handler) http.Handler {
 		ip, _, err := net.SplitHostPort(r.RemoteAddr)
 		if err != nil {
 			ip = r.RemoteAddr
+		}
+		if s.config.ProxySecret != "" {
+			// Only the authenticated edge may supply a visitor address. Direct
+			// development requests always use their actual connection address.
+			if forwarded := net.ParseIP(r.Header.Get("X-Retruco-Client-IP")); forwarded != nil {
+				ip = forwarded.String()
+			}
 		}
 		limit := 120
 		if r.URL.Path == "/api/login" || r.URL.Path == "/api/register" || r.URL.Path == "/api/guest" {
