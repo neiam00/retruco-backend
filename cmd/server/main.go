@@ -13,6 +13,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/neiam00/retruco-backend/internal/api"
+	"github.com/neiam00/retruco-backend/internal/config"
 	"github.com/neiam00/retruco-backend/internal/game"
 	"github.com/neiam00/retruco-backend/internal/store"
 )
@@ -26,6 +27,9 @@ func main() {
 }
 
 func run(log *slog.Logger) error {
+	if err := config.LoadDevelopmentEnv(); err != nil {
+		return err
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	config, err := pgxpool.ParseConfig(os.Getenv("DATABASE_URL"))

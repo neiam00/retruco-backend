@@ -1,4 +1,7 @@
-.PHONY: test check fmt lint
+.PHONY: dev test check fmt lint
+
+dev:
+	APP_ENV=development go run ./cmd/server
 
 test:
 	go test -race ./...

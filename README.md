@@ -12,11 +12,17 @@ Requirements: Go 1.27.2+, Docker with Compose, and PostgreSQL 18.
 1. Copy `.env.example` to `.env` and choose a local URL-safe database password.
    Keep the password in `DATABASE_URL` consistent with `POSTGRES_PASSWORD`.
 2. Run `docker compose up -d db`.
-3. Export the values from `.env` into your shell. The Go commands do not read
-   dotenv files automatically.
-4. Run `go run ./cmd/migrate up`, then `go run ./cmd/server`.
+3. Run `APP_ENV=development go run ./cmd/migrate up`.
+4. Run `make dev` (equivalent to `APP_ENV=development go run ./cmd/server`).
 5. Start the frontend at `http://127.0.0.1:5173`. Its Vite proxy forwards `/api`
    and WebSockets to `127.0.0.1:8080`.
+
+The server and migration command load only `.env` from the current working
+directory when `APP_ENV=development` is set in the process environment.
+Existing environment variables take precedence, including empty values.
+A missing `.env` is allowed; an unreadable or malformed file stops startup.
+`.env.example` is never loaded. Without `APP_ENV=development`, configuration
+comes entirely from the process environment.
 
 Alternatively, `docker compose up --build` runs the database, migrations, and API
 together. PostgreSQL and the API bind only to loopback on the host. Never use
