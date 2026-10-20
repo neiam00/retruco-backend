@@ -106,6 +106,9 @@ events they already retained; discarded events from earlier hands cannot be rebu
 
 ## Production: Cloudflare Pages → NGINX → Go
 
+For automatic deployment on pushes to `master`, see
+[GitHub Actions VPS deployment](deploy/GITHUB-ACTIONS.md).
+
 For voice signaling and the self-hosted TURN relay, see [voice deployment](deploy/VOICE.md).
 
 The public frontend and API use `https://retru.co.ve` and

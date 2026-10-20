@@ -1,0 +1,96 @@
+name: Deploy backend to VPS
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backend-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    # Manual runs must also use the production branch.
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    environment:
+      name: production
+      url: https://retru.co.ve
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out the pushed commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Validate deployment scripts
+        run: |
+          bash -n deploy/deploy-vps.sh
+          python3 -m unittest discover -s deploy/tests -p 'test_*.py' -v
+
+      - name: Build and test backend with its Docker toolchain
+        run: |
+          docker build --target build --tag retruco-ci .
+          docker run --rm retruco-ci go test ./...
+          docker run --rm retruco-ci go vet ./...
+
+      - name: Configure verified SSH access
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_PORT: ${{ secrets.VPS_PORT }}
+          VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          : "${VPS_HOST:?Set VPS_HOST}"
+          : "${VPS_SSH_PRIVATE_KEY:?Set VPS_SSH_PRIVATE_KEY}"
+          : "${VPS_KNOWN_HOSTS:?Set VPS_KNOWN_HOSTS}"
+          VPS_USER="${VPS_USER:-root}"
+          VPS_PORT="${VPS_PORT:-22}"
+          [[ "$VPS_HOST" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*$ ]] || { echo "VPS_HOST must be an IPv4 address or hostname"; exit 1; }
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]*$ ]] || { echo "Invalid VPS_USER"; exit 1; }
+          [[ "$VPS_PORT" =~ ^[0-9]{1,5}$ ]] && (( 10#$VPS_PORT >= 1 && 10#$VPS_PORT <= 65535 )) || { echo "Invalid VPS_PORT"; exit 1; }
+          umask 077
+          mkdir -p "$RUNNER_TEMP/retruco-ssh"
+          printf '%s\n' "$VPS_SSH_PRIVATE_KEY" | tr -d '\r' > "$RUNNER_TEMP/retruco-ssh/key"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/retruco-ssh/known_hosts"
+          ssh-keygen -y -P "" -f "$RUNNER_TEMP/retruco-ssh/key" > /dev/null
+          lookup="$VPS_HOST"
+          if [[ "$VPS_PORT" != 22 ]]; then lookup="[$VPS_HOST]:$VPS_PORT"; fi
+          ssh-keygen -F "$lookup" -f "$RUNNER_TEMP/retruco-ssh/known_hosts" > /dev/null
+          cat > "$RUNNER_TEMP/retruco-ssh/config" <<EOF
+          Host retruco-vps
+            HostName $VPS_HOST
+            User $VPS_USER
+            Port $VPS_PORT
+            IdentityFile $RUNNER_TEMP/retruco-ssh/key
+            UserKnownHostsFile $RUNNER_TEMP/retruco-ssh/known_hosts
+            StrictHostKeyChecking yes
+            IdentitiesOnly yes
+            BatchMode yes
+            ConnectTimeout 15
+            ServerAliveInterval 30
+            ServerAliveCountMax 6
+          EOF
+
+      - name: Upload and deploy
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/retruco-source.tar.gz"
+          remote_archive="/tmp/retruco-deploy-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.tar.gz"
+          git archive --format=tar.gz --output="$archive" HEAD -- . ':(exclude).env' ':(exclude).env.*'
+          scp -F "$RUNNER_TEMP/retruco-ssh/config" "$archive" "retruco-vps:$remote_archive"
+          ssh -F "$RUNNER_TEMP/retruco-ssh/config" retruco-vps \
+            "bash -s -- $remote_archive $GITHUB_SHA" < deploy/deploy-vps.sh
+
+      - name: Remove runner credentials
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/retruco-ssh" "$RUNNER_TEMP/retruco-source.tar.gz"
