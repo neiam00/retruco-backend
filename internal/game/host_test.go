@@ -151,10 +151,13 @@ func TestDuplicateCommandsAndReconnectDoNotResetTheClock(t *testing.T) {
 	assert.Equal(t, after.Deadline, reconnected.Deadline)
 	require.NotEmpty(t, after.Events)
 	assert.Equal(t, after.Events, reconnected.Events, "retrying a move must not duplicate its public announcement")
+	assert.Equal(t, after.CantoHistory, reconnected.CantoHistory)
+	require.Len(t, after.CantoHistory, 1)
 	assert.Equal(t, "a_ley", after.Events[len(after.Events)-1].Event.Text)
 	spectator, err := host.Snapshot(code, "spectator", (turn+1)%4)
 	require.NoError(t, err)
 	assert.Equal(t, after.Events, spectator.Events, "declarations are public across perspectives")
+	assert.Equal(t, after.CantoHistory, spectator.CantoHistory)
 
 	restored := game.New(repository, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	require.NoError(t, restored.Restore(t.Context()))
@@ -163,9 +166,70 @@ func TestDuplicateCommandsAndReconnectDoNotResetTheClock(t *testing.T) {
 	assert.Equal(t, after.State, restarted.State)
 	assert.True(t, after.Deadline.Equal(restarted.Deadline))
 	assert.Equal(t, after.Events, restarted.Events, "reconnect and restore retain the same public announcements")
+	assert.Equal(t, after.CantoHistory, restarted.CantoHistory)
 
 	input.ID = "stale-command"
 	require.Error(t, host.Handle(t.Context(), code, players[turn], input))
+}
+
+func TestCantoHistorySurvivesTheNextHandAndRestart(t *testing.T) {
+	host, repository, code, players := newHost(t, false)
+	view := cut(t, host, code, players)
+	assert.Empty(t, view.CantoHistory, "cutting the deck is not a canto")
+	caller := view.State.Turn
+	require.NoError(t, host.Handle(t.Context(), code, players[caller], game.Input{
+		ID: "truco", Revision: view.State.Revision, Command: rules.Command{Type: "call", Kind: "truco"},
+	}))
+	view, err := host.Snapshot(code, players[caller].ID, caller)
+	require.NoError(t, err)
+	responder := (caller + 1) % len(players)
+	require.NoError(t, host.Handle(t.Context(), code, players[responder], game.Input{
+		ID: "decline", Revision: view.State.Revision, Command: rules.Command{Type: "respond", Kind: "decline"},
+	}))
+	view, err = host.Snapshot(code, players[caller].ID, caller)
+	require.NoError(t, err)
+	require.Equal(t, rules.HandOver, view.State.Phase)
+	require.Len(t, view.CantoHistory, 2)
+	assert.Equal(t, "truco", view.CantoHistory[0].Event.Kind)
+	assert.Equal(t, caller, view.CantoHistory[0].Event.Seat)
+	assert.Equal(t, "decline", view.CantoHistory[1].Event.Kind)
+	assert.Equal(t, responder, view.CantoHistory[1].Event.Seat)
+
+	// Expire a real saved hand through the host's normal deadline loop.
+	var saved game.Match
+	require.NoError(t, json.Unmarshal(repository.payloads[code], &saved))
+	saved.Deadline = time.Now().Add(-time.Second)
+	payload, err := json.Marshal(saved)
+	require.NoError(t, err)
+	repository.payloads[code] = payload
+	host = game.New(repository, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	require.NoError(t, host.Restore(t.Context()))
+	ctx, cancel := context.WithCancel(t.Context())
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		host.Run(ctx)
+	}()
+	t.Cleanup(func() { cancel(); <-stopped })
+	require.Eventually(t, func() bool {
+		current, snapshotErr := host.Snapshot(code, players[caller].ID, caller)
+		return snapshotErr == nil && current.State.HandNumber == 2
+	}, time.Second, 10*time.Millisecond)
+	cancel()
+	<-stopped
+
+	secondHand := cut(t, host, code, players)
+	assert.Equal(t, view.CantoHistory, secondHand.CantoHistory)
+	require.NoError(t, host.Handle(t.Context(), code, players[secondHand.State.Turn], game.Input{
+		ID: "second-truco", Revision: secondHand.State.Revision, Command: rules.Command{Type: "call", Kind: "truco"},
+	}))
+	restarted := game.New(repository, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	require.NoError(t, restarted.Restore(t.Context()))
+	restored, err := restarted.Snapshot(code, "spectator", 0)
+	require.NoError(t, err)
+	require.Len(t, restored.CantoHistory, 3)
+	assert.Equal(t, view.CantoHistory, restored.CantoHistory[:2])
+	assert.Equal(t, 2, restored.CantoHistory[2].Hand)
 }
 
 func TestPersistenceFailureDoesNotPublishAnUncommittedMove(t *testing.T) {

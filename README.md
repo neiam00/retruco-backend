@@ -70,6 +70,11 @@ them as expired. Completed matches do not consume the active-table capacity.
 Accepted envido reveals comparison values at settlement; concealed cards stay
 concealed. These behaviors follow the direct user clarifications.
 
+Public cantos, declarations, and replies are retained for the entire match,
+including their hand and calling seat. Reconnecting clients receive this history
+grouped by hand in the interface. Older saved matches can recover only the recent
+events they already retained; discarded events from earlier hands cannot be rebuilt.
+
 ## Production: Cloudflare Pages → NGINX → Go
 
 The public frontend and API use `https://retru.co.ve` and

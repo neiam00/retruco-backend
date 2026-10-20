@@ -61,22 +61,24 @@ type Match struct {
 	LastActivity time.Time
 	Expired      bool
 	Events       []GameEvent
+	CantoHistory []GameEvent
 }
 
 type Snapshot struct {
-	Code        string       `json:"code"`
-	Private     bool         `json:"private"`
-	Config      rules.Config `json:"config"`
-	Seats       []Seat       `json:"seats"`
-	Seat        int          `json:"seat"`
-	Perspective int          `json:"perspective"`
-	State       *rules.View  `json:"state,omitempty"`
-	Deadline    time.Time    `json:"deadline"`
-	ServerTime  time.Time    `json:"serverTime"`
-	Chat        []Chat       `json:"chat"`
-	Signals     []Signal     `json:"signals"`
-	Sequence    uint64       `json:"sequence"`
-	Events      []GameEvent  `json:"events"`
+	Code         string       `json:"code"`
+	Private      bool         `json:"private"`
+	Config       rules.Config `json:"config"`
+	Seats        []Seat       `json:"seats"`
+	Seat         int          `json:"seat"`
+	Perspective  int          `json:"perspective"`
+	State        *rules.View  `json:"state,omitempty"`
+	Deadline     time.Time    `json:"deadline"`
+	ServerTime   time.Time    `json:"serverTime"`
+	Chat         []Chat       `json:"chat"`
+	Signals      []Signal     `json:"signals"`
+	Sequence     uint64       `json:"sequence"`
+	Events       []GameEvent  `json:"events"`
+	CantoHistory []GameEvent  `json:"cantoHistory"`
 }
 
 type Host struct {
@@ -112,6 +114,14 @@ func (h *Host) Restore(ctx context.Context) error {
 		if match.LastActivity.IsZero() {
 			// Older snapshots predate lobby expiry. Give them one full window.
 			match.LastActivity = time.Now()
+		}
+		if match.CantoHistory == nil {
+			// Older snapshots only retain recent events from their current hand.
+			for _, event := range match.Events {
+				if isCanto(event.Event) {
+					match.CantoHistory = append(match.CantoHistory, event)
+				}
+			}
 		}
 		h.matches[match.Code] = &match
 	}
@@ -275,6 +285,7 @@ func clone(m *Match) *Match {
 	next.Chat = append([]Chat{}, m.Chat...)
 	next.Signals = append([]Signal{}, m.Signals...)
 	next.Events = append([]GameEvent{}, m.Events...)
+	next.CantoHistory = append([]GameEvent{}, m.CantoHistory...)
 	next.Recent = make(map[string]uint64, len(m.Recent))
 	for key, value := range m.Recent {
 		next.Recent[key] = value
@@ -321,18 +332,19 @@ func (h *Host) Snapshot(code, userID string, perspective int) (Snapshot, error) 
 		perspective = 0
 	}
 	v := Snapshot{
-		Code:        code,
-		Private:     m.Private,
-		Config:      m.Config,
-		Seats:       append([]Seat{}, m.Seats...),
-		Seat:        seat,
-		Perspective: perspective,
-		Deadline:    m.Deadline,
-		ServerTime:  time.Now(),
-		Chat:        append([]Chat{}, m.Chat...),
-		Signals:     []Signal{},
-		Sequence:    m.Sequence,
-		Events:      append([]GameEvent{}, m.Events...),
+		Code:         code,
+		Private:      m.Private,
+		Config:       m.Config,
+		Seats:        append([]Seat{}, m.Seats...),
+		Seat:         seat,
+		Perspective:  perspective,
+		Deadline:     m.Deadline,
+		ServerTime:   time.Now(),
+		Chat:         append([]Chat{}, m.Chat...),
+		Signals:      []Signal{},
+		Sequence:     m.Sequence,
+		Events:       append([]GameEvent{}, m.Events...),
+		CantoHistory: append([]GameEvent{}, m.CantoHistory...),
 	}
 	if m.State != nil {
 		view := rules.ViewFor(*m.State, perspective, seat < 0)
@@ -484,15 +496,23 @@ func validSignal(signal string) bool {
 
 func (m *Match) recordEvents(events []rules.Event) {
 	for _, event := range events {
-		m.Events = append(m.Events, GameEvent{
+		record := GameEvent{
 			ID:    m.Sequence + 1,
 			Hand:  m.State.HandNumber,
 			Event: event,
-		})
+		}
+		m.Events = append(m.Events, record)
+		if isCanto(event) {
+			m.CantoHistory = append(m.CantoHistory, record)
+		}
 	}
 	if len(m.Events) > 24 {
 		m.Events = m.Events[len(m.Events)-24:]
 	}
+}
+
+func isCanto(event rules.Event) bool {
+	return event.Type == "call" || event.Type == "respond" || event.Text != ""
 }
 
 func (h *Host) Subscribe(code string) (<-chan struct{}, func()) {
