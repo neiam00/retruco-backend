@@ -460,6 +460,9 @@ func (s *Server) socket(w http.ResponseWriter, r *http.Request) {
 	conn.SetReadLimit(8192)
 	ctx, cancel := context.WithCancel(s.ctx)
 	defer cancel()
+	connectionID := rand.Text()
+	disconnect := s.host.ConnectPlayer(code, user.ID, connectionID)
+	defer disconnect()
 	updates, unsubscribe := s.host.Subscribe(code)
 	defer unsubscribe()
 	type message struct {
@@ -496,7 +499,10 @@ func (s *Server) socket(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return err
 		}
-		return send(map[string]any{"type": "snapshot", "data": value})
+		return send(map[string]any{
+			"type": "snapshot", "data": value,
+			"cpu": s.host.CPUWork(code, user.ID, connectionID),
+		})
 	}
 	if snapshot() != nil {
 		return
@@ -542,7 +548,7 @@ func (s *Server) socket(w http.ResponseWriter, r *http.Request) {
 				}
 				continue
 			}
-			if err := s.host.Handle(ctx, code, user, msg.Input); err != nil {
+			if err := s.host.HandleFromConnection(ctx, code, user, msg.Input, connectionID); err != nil {
 				if send(map[string]string{"type": "error", "error": err.Error()}) != nil {
 					return
 				}

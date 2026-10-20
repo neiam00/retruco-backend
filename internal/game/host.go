@@ -25,6 +25,7 @@ type Repository interface {
 type Seat struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
+	CPU  bool   `json:"cpu,omitempty"`
 }
 
 type Chat struct {
@@ -49,10 +50,13 @@ type GameEvent struct {
 
 // RoomOptions contains social and hosting choices, separate from game rules.
 type RoomOptions struct {
-	SpectatorsCanSpeak bool `json:"spectatorsCanSpeak"`
+	SpectatorsCanSpeak bool  `json:"spectatorsCanSpeak"`
+	CPUSeats           []int `json:"cpuSeats,omitempty"`
 }
 
 type Match struct {
+	CreatorID    string
+	CreatorName  string
 	Options      RoomOptions
 	Code         string
 	Private      bool
@@ -71,37 +75,44 @@ type Match struct {
 }
 
 type Snapshot struct {
-	Options      RoomOptions  `json:"options"`
-	Code         string       `json:"code"`
-	Private      bool         `json:"private"`
-	Config       rules.Config `json:"config"`
-	Seats        []Seat       `json:"seats"`
-	Seat         int          `json:"seat"`
-	Perspective  int          `json:"perspective"`
-	State        *rules.View  `json:"state,omitempty"`
-	Deadline     time.Time    `json:"deadline"`
-	ServerTime   time.Time    `json:"serverTime"`
-	Chat         []Chat       `json:"chat"`
-	Signals      []Signal     `json:"signals"`
-	Sequence     uint64       `json:"sequence"`
-	Events       []GameEvent  `json:"events"`
-	CantoHistory []GameEvent  `json:"cantoHistory"`
+	CPUController int          `json:"cpuController"`
+	CPUPaused     bool         `json:"cpuPaused"`
+	Options       RoomOptions  `json:"options"`
+	Code          string       `json:"code"`
+	Private       bool         `json:"private"`
+	Config        rules.Config `json:"config"`
+	Seats         []Seat       `json:"seats"`
+	Seat          int          `json:"seat"`
+	Perspective   int          `json:"perspective"`
+	State         *rules.View  `json:"state,omitempty"`
+	Deadline      time.Time    `json:"deadline"`
+	ServerTime    time.Time    `json:"serverTime"`
+	Chat          []Chat       `json:"chat"`
+	Signals       []Signal     `json:"signals"`
+	Sequence      uint64       `json:"sequence"`
+	Events        []GameEvent  `json:"events"`
+	CantoHistory  []GameEvent  `json:"cantoHistory"`
 }
 
 type Host struct {
-	mu         sync.Mutex
-	matches    map[string]*Match
-	listeners  map[string]map[chan struct{}]bool
-	repository Repository
-	log        *slog.Logger
+	mu              sync.Mutex
+	matches         map[string]*Match
+	listeners       map[string]map[chan struct{}]bool
+	repository      Repository
+	log             *slog.Logger
+	connections     map[string]map[string]playerConnection
+	controllers     map[string]string
+	connectionOrder uint64
 }
 
 func New(repository Repository, log *slog.Logger) *Host {
 	return &Host{
-		matches:    map[string]*Match{},
-		listeners:  map[string]map[chan struct{}]bool{},
-		repository: repository,
-		log:        log,
+		matches:     map[string]*Match{},
+		listeners:   map[string]map[chan struct{}]bool{},
+		repository:  repository,
+		log:         log,
+		connections: make(map[string]map[string]playerConnection),
+		controllers: make(map[string]string),
 	}
 }
 
@@ -185,7 +196,9 @@ func (h *Host) persist(ctx context.Context, match *Match, create bool) error {
 	}
 	members := []string{}
 	for _, seat := range match.Seats {
-		members = append(members, seat.ID)
+		if seat.ID != "" && !seat.CPU {
+			members = append(members, seat.ID)
+		}
 	}
 	finished := match.Expired || (match.State != nil && match.State.Phase == rules.MatchOver)
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -209,6 +222,10 @@ func (h *Host) Create(ctx context.Context, user store.User, config rules.Config,
 	if (config.Players != 2 && config.Players != 4) || (config.Target != 12 && config.Target != 24) {
 		return "", fmt.Errorf("configuración inválida")
 	}
+	if err := validateCPUSeats(config.Players, options.CPUSeats); err != nil {
+		return "", err
+	}
+	options.CPUSeats = append([]int(nil), options.CPUSeats...)
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	active := 0
@@ -229,6 +246,8 @@ func (h *Host) Create(ctx context.Context, user store.User, config rules.Config,
 			continue
 		}
 		match := &Match{
+			CreatorID:    user.ID,
+			CreatorName:  user.Name,
 			Options:      options,
 			Code:         generated,
 			Private:      private,
@@ -238,6 +257,19 @@ func (h *Host) Create(ctx context.Context, user store.User, config rules.Config,
 			Chat:         []Chat{},
 			Sequence:     1,
 			LastActivity: time.Now(),
+		}
+		if len(options.CPUSeats) > 0 {
+			match.Seats = make([]Seat, config.Players)
+			match.Seats[0] = Seat{ID: user.ID, Name: user.Name}
+			for _, seat := range options.CPUSeats {
+				match.Seats[seat] = Seat{
+					ID:   fmt.Sprintf("cpu:%s:%d", generated, seat),
+					Name: fmt.Sprintf("CPU %d", seat), CPU: true,
+				}
+			}
+			if err := startWhenFull(match); err != nil {
+				return "", err
+			}
 		}
 		if err := h.persist(ctx, match, true); errors.Is(err, store.ErrMatchCodeInUse) {
 			continue
@@ -262,26 +294,22 @@ func (h *Host) Join(ctx context.Context, code string, user store.User) error {
 			return nil
 		}
 	}
-	if m.State != nil || len(m.Seats) >= m.Config.Players {
+	if m.State != nil || occupiedSeats(m) >= m.Config.Players {
 		return fmt.Errorf("la mesa está llena; puedes entrar a mirar")
 	}
 	next := clone(m)
-	next.Seats = append(next.Seats, Seat{ID: user.ID, Name: user.Name})
-	if len(next.Seats) == next.Config.Players {
-		deck, err := shuffledDeck()
-		if err != nil {
-			return err
+	if len(next.Options.CPUSeats) > 0 {
+		for seat := range next.Seats {
+			if next.Seats[seat].ID == "" {
+				next.Seats[seat] = Seat{ID: user.ID, Name: user.Name}
+				break
+			}
 		}
-		dealer, err := randomInt(next.Config.Players)
-		if err != nil {
-			return err
-		}
-		state, err := rules.New(next.Config, dealer, deck)
-		if err != nil {
-			return err
-		}
-		next.State = &state
-		next.Deadline = time.Now().Add(30 * time.Second)
+	} else {
+		next.Seats = append(next.Seats, Seat{ID: user.ID, Name: user.Name})
+	}
+	if err := startWhenFull(next); err != nil {
+		return err
 	}
 	next.Sequence++
 	return h.commit(ctx, next)
@@ -289,6 +317,7 @@ func (h *Host) Join(ctx context.Context, code string, user store.User) error {
 
 func clone(m *Match) *Match {
 	next := *m
+	next.Options.CPUSeats = append([]int(nil), m.Options.CPUSeats...)
 	next.Seats = append([]Seat{}, m.Seats...)
 	next.Chat = append([]Chat{}, m.Chat...)
 	next.Signals = append([]Signal{}, m.Signals...)
@@ -307,16 +336,24 @@ func (h *Host) commit(ctx context.Context, next *Match) error {
 		return err
 	}
 	h.matches[next.Code] = next
-	for channel := range h.listeners[next.Code] {
+	h.selectCPUController(next)
+	h.notify(next.Code)
+	return nil
+}
+
+func (h *Host) notify(code string) {
+	for channel := range h.listeners[code] {
 		select {
 		case channel <- struct{}{}:
 		default:
 		}
 	}
-	return nil
 }
 
 func seatOf(m *Match, userID string) int {
+	if userID == "" {
+		return -1
+	}
 	for seat, user := range m.Seats {
 		if user.ID == userID {
 			return seat
@@ -340,21 +377,24 @@ func (h *Host) Snapshot(code, userID string, perspective int) (Snapshot, error) 
 		perspective = 0
 	}
 	v := Snapshot{
-		Options:      m.Options,
-		Code:         code,
-		Private:      m.Private,
-		Config:       m.Config,
-		Seats:        append([]Seat{}, m.Seats...),
-		Seat:         seat,
-		Perspective:  perspective,
-		Deadline:     m.Deadline,
-		ServerTime:   time.Now(),
-		Chat:         append([]Chat{}, m.Chat...),
-		Signals:      []Signal{},
-		Sequence:     m.Sequence,
-		Events:       append([]GameEvent{}, m.Events...),
-		CantoHistory: append([]GameEvent{}, m.CantoHistory...),
+		CPUController: h.controllerSeat(m),
+		CPUPaused:     len(m.Options.CPUSeats) > 0 && m.State != nil && m.State.Phase != rules.MatchOver && h.controllers[code] == "",
+		Options:       m.Options,
+		Code:          code,
+		Private:       m.Private,
+		Config:        m.Config,
+		Seats:         append([]Seat{}, m.Seats...),
+		Seat:          seat,
+		Perspective:   perspective,
+		Deadline:      m.Deadline,
+		ServerTime:    time.Now(),
+		Chat:          append([]Chat{}, m.Chat...),
+		Signals:       []Signal{},
+		Sequence:      m.Sequence,
+		Events:        append([]GameEvent{}, m.Events...),
+		CantoHistory:  append([]GameEvent{}, m.CantoHistory...),
 	}
+	v.Options.CPUSeats = append([]int(nil), m.Options.CPUSeats...)
 	if m.State != nil {
 		view := rules.ViewFor(*m.State, perspective, seat < 0)
 		v.State = &view
@@ -368,6 +408,7 @@ func (h *Host) Snapshot(code, userID string, perspective int) (Snapshot, error) 
 }
 
 type Listing struct {
+	CPUPlayers   int    `json:"cpuPlayers"`
 	Code         string `json:"code"`
 	Players      int    `json:"players"`
 	Capacity     int    `json:"capacity"`
@@ -382,23 +423,28 @@ func (h *Host) List() []Listing {
 	defer h.mu.Unlock()
 	list := []Listing{}
 	for _, m := range h.matches {
-		if m.Private || len(m.Seats) == 0 || (m.State != nil && m.State.Phase == rules.MatchOver) {
+		if m.Private || occupiedSeats(m) == 0 || (m.State != nil && m.State.Phase == rules.MatchOver) {
 			continue
 		}
 		list = append(list, Listing{
 			Code:         m.Code,
-			Players:      len(m.Seats),
+			Players:      occupiedSeats(m),
+			CPUPlayers:   len(m.Options.CPUSeats),
 			Capacity:     m.Config.Players,
 			Target:       m.Config.Target,
 			FlorRequired: m.Config.FlorRequired,
 			Started:      m.State != nil,
 			Host:         m.Seats[0].Name,
 		})
+		if list[len(list)-1].Host == "" {
+			list[len(list)-1].Host = m.CreatorName
+		}
 	}
 	return list
 }
 
 type Input struct {
+	CPUSeat  *int          `json:"cpuSeat,omitempty"`
 	ID       string        `json:"id"`
 	Revision uint64        `json:"revision"`
 	Command  rules.Command `json:"command"`
@@ -407,6 +453,12 @@ type Input struct {
 }
 
 func (h *Host) Handle(ctx context.Context, code string, user store.User, input Input) error {
+	return h.HandleFromConnection(ctx, code, user, input, "")
+}
+
+// HandleFromConnection binds delegated CPU actions to the server-issued socket
+// identity. A browser cannot claim authority by sending another user's ID.
+func (h *Host) HandleFromConnection(ctx context.Context, code string, user store.User, input Input, connectionID string) error {
 	if input.ID == "" || len(input.ID) > 80 {
 		return fmt.Errorf("identificador de acción inválido")
 	}
@@ -415,6 +467,20 @@ func (h *Host) Handle(ctx context.Context, code string, user store.User, input I
 	m := h.matches[code]
 	if m == nil {
 		return fmt.Errorf("no encontramos esa mesa")
+	}
+	seat := seatOf(m, user.ID)
+	if input.CPUSeat != nil {
+		cpuSeat := *input.CPUSeat
+		connection := h.connections[code][connectionID]
+		if connectionID == "" || h.controllers[code] != connectionID || connection.userID != user.ID ||
+			cpuSeat < 0 || cpuSeat >= len(m.Seats) || !m.Seats[cpuSeat].CPU ||
+			input.Chat != "" || input.Signal != "" || input.Command.Type == "leave" {
+			return fmt.Errorf("no tienes el control de ese jugador CPU")
+		}
+		seat = cpuSeat
+	}
+	if len(m.Options.CPUSeats) > 0 && h.controllers[code] == "" && input.Chat == "" && input.Signal == "" && input.Command.Type != "leave" {
+		return fmt.Errorf("esperando a un jugador para continuar con la CPU")
 	}
 	key := user.ID + ":" + input.ID
 	if _, exists := m.Recent[key]; exists {
@@ -427,7 +493,6 @@ func (h *Host) Handle(ctx context.Context, code string, user store.User, input I
 		m = h.matches[code]
 	}
 	next := clone(m)
-	seat := seatOf(m, user.ID)
 	switch {
 	case input.Chat != "":
 		message := strings.TrimSpace(input.Chat)
@@ -469,7 +534,11 @@ func (h *Host) Handle(ctx context.Context, code string, user store.User, input I
 			if input.Command.Type != "leave" {
 				return fmt.Errorf("esperando a los demás jugadores")
 			}
-			next.Seats = append(next.Seats[:seat], next.Seats[seat+1:]...)
+			if len(next.Options.CPUSeats) > 0 {
+				next.Seats[seat] = Seat{}
+			} else {
+				next.Seats = append(next.Seats[:seat], next.Seats[seat+1:]...)
+			}
 		} else {
 			if input.Revision != m.State.Revision {
 				return fmt.Errorf("la mesa cambió. Revisa el estado actualizado")
@@ -560,6 +629,9 @@ func (h *Host) Run(ctx context.Context) {
 						continue
 					}
 					delete(h.matches, m.Code)
+					continue
+				}
+				if len(m.Options.CPUSeats) > 0 && h.controllers[m.Code] == "" {
 					continue
 				}
 				if m.State == nil || m.Deadline.IsZero() || now.Before(m.Deadline) {

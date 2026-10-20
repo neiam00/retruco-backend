@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -131,6 +132,69 @@ func TestAccountAndMatchPersistence(t *testing.T) {
 	require.NoError(t, playerVoice.CloseNow())
 	require.NoError(t, listenerVoice.CloseNow())
 	require.NoError(t, speakerVoice.CloseNow())
+
+	// CPU seats are persisted without inserting fake users into membership rows.
+	var cpuRoom struct {
+		Code string `json:"code"`
+	}
+	require.Equal(t, http.StatusCreated, request(second, http.MethodPost, "/api/matches", map[string]any{
+		"private": true,
+		"config":  rules.Config{Players: 2, Target: 12},
+		"options": game.RoomOptions{CPUSeats: []int{1}},
+	}, &cpuRoom))
+	cpuConnection, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(httpServer.URL, "http")+"/api/matches/"+cpuRoom.Code+"/ws", &websocket.DialOptions{
+		HTTPClient: second, HTTPHeader: http.Header{"Origin": []string{origin}},
+	})
+	require.NoError(t, err)
+	defer func() { _ = cpuConnection.CloseNow() }()
+	type cpuSnapshot struct {
+		Type string        `json:"type"`
+		Data game.Snapshot `json:"data"`
+		CPU  game.CPUWork  `json:"cpu"`
+	}
+	var botMessage cpuSnapshot
+	require.NoError(t, wsjson.Read(ctx, cpuConnection, &botMessage))
+	require.True(t, botMessage.CPU.Controlled)
+	require.Len(t, botMessage.Data.Seats, 2)
+	assert.True(t, botMessage.Data.Seats[1].CPU)
+	for move := 0; move < 5 && botMessage.CPU.View == nil; move++ {
+		require.NotEmpty(t, botMessage.Data.State.Legal)
+		revision := botMessage.Data.State.Revision
+		require.NoError(t, wsjson.Write(ctx, cpuConnection, map[string]any{"input": game.Input{
+			ID: fmt.Sprintf("human-before-cpu-%d", move), Revision: revision,
+			Command: botMessage.Data.State.Legal[0],
+		}}))
+		for {
+			require.NoError(t, wsjson.Read(ctx, cpuConnection, &botMessage))
+			require.Equal(t, "snapshot", botMessage.Type)
+			if botMessage.Data.State.Revision > revision {
+				break
+			}
+		}
+	}
+	require.NotNil(t, botMessage.CPU.View)
+	revision := botMessage.CPU.View.Revision
+	require.NoError(t, wsjson.Write(ctx, cpuConnection, map[string]any{"input": game.Input{
+		ID: "browser-cpu-move", Revision: revision, CPUSeat: &botMessage.CPU.Seat,
+		Command: botMessage.CPU.View.Legal[0],
+	}}))
+	for {
+		require.NoError(t, wsjson.Read(ctx, cpuConnection, &botMessage))
+		require.Equal(t, "snapshot", botMessage.Type)
+		if botMessage.Data.State.Revision > revision {
+			break
+		}
+	}
+	assert.Equal(t, revision+1, botMessage.Data.State.Revision)
+	watcherConnection, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(httpServer.URL, "http")+"/api/matches/"+cpuRoom.Code+"/ws", &websocket.DialOptions{
+		HTTPClient: spectator, HTTPHeader: http.Header{"Origin": []string{origin}},
+	})
+	require.NoError(t, err)
+	defer func() { _ = watcherConnection.CloseNow() }()
+	var watched cpuSnapshot
+	require.NoError(t, wsjson.Read(ctx, watcherConnection, &watched))
+	assert.False(t, watched.CPU.Controlled)
+	assert.Nil(t, watched.CPU.View)
 
 	connection, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(httpServer.URL, "http")+"/api/matches/"+created.Code+"/ws", &websocket.DialOptions{
 		HTTPClient: first,

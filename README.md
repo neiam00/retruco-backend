@@ -46,6 +46,35 @@ runner; Node must be installed for the latter.
 
 ## Architecture and privacy
 
+CPU rooms accept `options.cpuSeats` when creating a match: `[1]` for 1v1, or
+any distinct subset of seats 1–3 for 2v2. Seat 0 belongs to the creator; all
+unselected seats remain available to humans. Teams are alternating seats.
+Listings include `cpuPlayers`; snapshots expose `cpuController` (a seat, or
+`-1`) and `cpuPaused`. These choices survive restart with the match snapshot.
+
+Each game WebSocket receives a separate `cpu` envelope. Only the designated
+human connection receives `controlled: true` and the next CPU's authorized
+`view`, `seat`, and protocol `version`. Submit its chosen command as an ordinary
+`input` with `cpuSeat`, `revision`, and a unique `id`. The server binds authority
+to the connection and validates the move against the authoritative engine.
+Spectators and other tabs never receive that work. On disconnect, control moves
+to another connected human; rooms without connected humans wait without
+advancing their deadline. Voice connections do not count as CPU controllers.
+
+The `cpu` package is a bounded heuristic policy over a single authorized view.
+It cannot accept the secret `rules.State`. `make browser-engine` builds
+`bin/browser-engine/cpu.wasm` and its matching `wasm_exec.js` runtime. They must
+be shipped together by the frontend and loaded in one dedicated Worker only
+when that connection controls CPU players. The Worker calls the exported
+`retrucoCPUDecide` with a JSON `cpu.Request` and receives a JSON `cpu.Response`.
+Both protocol and rules versions are checked before choosing a move.
+`make test-wasm` runs the shared rules and CPU simulations with Go's Node/WASM
+runner; the same policy tests run natively under `go test`.
+The initial Go 1.27.2 artifact is 4,419,352 bytes (1,231,593 bytes with gzip);
+its matching JavaScript runtime is 16,992 bytes (4,356 bytes with gzip).
+Browser startup, memory, and decision latency still need measurement when the
+frontend Worker is integrated; native/WASM test times are not mobile benchmarks.
+
 - `rules` is deterministic Go without network, clock, database, or random APIs.
   Hosts supply shuffled decks and random timeout choices. See
   [RULES-DECISIONS.md](RULES-DECISIONS.md) for clarified game rules.
