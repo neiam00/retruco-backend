@@ -130,16 +130,26 @@ func (s *State) advanceCards() {
 		}
 	}
 	if s.Round == 2 && stacked > 0 {
-		s.revealBottoms()
-		winner := s.roundWinner(1)
+		first := s.roundWinner(0)
+		visibleCardsDecide := s.visibleCardsDecideHand(s.Team(first))
+		// Compare in a private copy to apply pegado's top-card penalty without
+		// revealing bottom cards that cannot change the visible hand outcome.
+		comparison := *s
+		comparison.revealBottoms()
+		winner := comparison.roundWinner(1)
 		for seat := 0; seat < s.Config.Players; seat++ {
 			if !s.Players[seat].Stacked || winner == seat {
 				continue
 			}
-			if !s.teammateStackTie(seat) {
+			if !comparison.teammateStackTie(seat) {
 				s.Players[seat].Plays[2].Burned = true
 			}
 		}
+		if visibleCardsDecide {
+			s.settle(s.Team(first))
+			return
+		}
+		s.revealBottoms()
 	}
 	first, second := s.roundWinner(0), s.roundWinner(1)
 	if second < 0 || s.Team(first) == s.Team(second) {
@@ -182,6 +192,29 @@ func (s *State) revealBottoms() {
 	for seat := 0; seat < s.Config.Players; seat++ {
 		s.Players[seat].Plays[1].Concealed = false
 	}
+}
+
+// A voluntary top card may or may not survive its hidden bottom's comparison.
+// If every possible combination still gives the first-round team the hand,
+// revealing those bottoms would disclose cards without changing the outcome.
+func (s State) visibleCardsDecideHand(firstTeam int) bool {
+	var stacked []int
+	for seat := 0; seat < s.Config.Players; seat++ {
+		if s.Players[seat].Stacked {
+			stacked = append(stacked, seat)
+		}
+	}
+	for burned := 0; burned < 1<<len(stacked); burned++ {
+		possible := s
+		for index, seat := range stacked {
+			possible.Players[seat].Plays[2].Burned = s.Players[seat].Plays[2].Burned || burned&(1<<index) != 0
+		}
+		third := possible.roundWinner(2)
+		if third >= 0 && possible.Team(third) != firstTeam {
+			return false
+		}
+	}
+	return true
 }
 
 func (s State) teammateStackTie(seat int) bool {

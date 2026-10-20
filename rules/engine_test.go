@@ -208,6 +208,48 @@ func TestFlorFlorPreservesStackedFlor(t *testing.T) {
 	}
 }
 
+func TestVoluntaryBottomStaysHiddenWhenVisibleCardsAlreadyDecideTheHand(t *testing.T) {
+	for _, bottom := range []rules.Card{{Suit: rules.Spades, Number: 11}, {Suit: rules.Cups, Number: 4}} {
+		s := fixture(t, false,
+			[3]rules.Card{{rules.Spades, 1}, {rules.Coins, 7}, {rules.Clubs, 1}},
+			[3]rules.Card{{rules.Coins, 4}, bottom, {rules.Cups, 5}},
+		)
+		s = apply(t, s, 1, rules.Command{Type: "play", Card: 0})
+		s = apply(t, s, 0, rules.Command{Type: "play", Card: 0})
+		s = apply(t, s, 0, rules.Command{Type: "play", Card: 1})
+		s = apply(t, s, 1, rules.Command{Type: "stack", Card: 1, Top: 2})
+		s = apply(t, s, 0, rules.Command{Type: "play", Card: 2})
+		assert.Equal(t, 0, s.HandWinner)
+		assert.True(t, s.Players[1].Plays[1].Concealed)
+		assert.Nil(t, rules.ViewFor(s, 0, true).Seats[1].Plays[1].Card)
+		assert.Equal(t, bottom.Suit == rules.Cups, s.Players[1].Plays[2].Burned,
+			"the top-card penalty still applies even when the bottom need not be shown")
+	}
+}
+
+func TestVisibleThirdRoundTieDoesNotExposeUnneededVoluntaryBottom(t *testing.T) {
+	s := fixture(t, false,
+		[3]rules.Card{{rules.Spades, 1}, {rules.Coins, 7}, {rules.Coins, 3}},
+		[3]rules.Card{{rules.Coins, 4}, {rules.Cups, 7}, {rules.Coins, 5}},
+		[3]rules.Card{{rules.Cups, 4}, {rules.Clubs, 4}, {rules.Clubs, 3}},
+		[3]rules.Card{{rules.Spades, 5}, {rules.Clubs, 5}, {rules.Spades, 3}},
+	)
+	for range 4 {
+		s = apply(t, s, s.Turn, rules.Command{Type: "play", Card: 0})
+	}
+	s = apply(t, s, 0, rules.Command{Type: "play", Card: 1})
+	s = apply(t, s, 1, rules.Command{Type: "stack", Card: 1, Top: 2})
+	for _, seat := range []int{2, 3} {
+		s = apply(t, s, seat, rules.Command{Type: "play", Card: 1})
+	}
+	for _, seat := range []int{2, 3, 0} {
+		s = apply(t, s, seat, rules.Command{Type: "play", Card: 2})
+	}
+	assert.Equal(t, 0, s.HandWinner)
+	assert.True(t, s.Players[1].Plays[1].Concealed)
+	assert.True(t, s.Players[1].Plays[2].Burned)
+}
+
 func TestRecetaWagerReplacesAutomaticPointAndDoesNotGuaranteeTruco(t *testing.T) {
 	s := fixture(t, false,
 		[3]rules.Card{{rules.Clubs, 7}, {rules.Clubs, 6}, {rules.Clubs, 5}},

@@ -24,6 +24,9 @@ clarifications override that document where they differ (2026-10-19):
 - Unstarted tables expire after 24 hours without activity.
 - Saying "Con mi flor" while calling or answering a canto counts as declaring
   that valid ordinary flor for later flor-contest eligibility.
+- Voluntary pegado bottoms stay concealed when the first-round winning team
+  also has the uniquely winning non-stacked third-round card. Top-card burning
+  still follows the actual second-round comparison.
 
 Seats increase counter-clockwise. The dealer's right neighbor is mano; the left
 neighbor cuts and receives the first dealt card. Four-player teammates sit opposite.

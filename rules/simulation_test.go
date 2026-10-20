@@ -17,11 +17,15 @@ func TestLegalPlayAlwaysReachesAMatchResult(t *testing.T) {
 		if trial%2 == 0 {
 			players = 4
 		}
+		target := 12
+		if trial%4 >= 2 {
+			target = 24
+		}
 		deck := rules.Deck()
 		random.Shuffle(len(deck), func(i, j int) { deck[i], deck[j] = deck[j], deck[i] })
 		state, err := rules.New(rules.Config{
 			Players:      players,
-			Target:       12,
+			Target:       target,
 			FlorRequired: trial%3 == 0,
 		}, random.IntN(players), deck)
 		require.NoError(t, err)
