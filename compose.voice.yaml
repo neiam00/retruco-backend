@@ -1,0 +1,32 @@
+# Linux production overlay: docker compose -f compose.yaml -f compose.voice.yaml up -d
+# TURN is a separate UDP/TCP service; it does not go through NGINX or Cloudflare.
+services:
+  turn:
+    image: coturn/coturn:4.18.0-r0
+    network_mode: host
+    restart: unless-stopped
+    command:
+      - --no-tls
+      - --fingerprint
+      - --use-auth-secret
+      - --static-auth-secret=${VOICE_TURN_SECRET:?Set VOICE_TURN_SECRET}
+      - --realm=${VOICE_TURN_REALM:?Set VOICE_TURN_REALM}
+      - --external-ip=${VOICE_TURN_EXTERNAL_IP:?Set VOICE_TURN_EXTERNAL_IP}
+      - --listening-port=3478
+      - --min-port=49160
+      - --max-port=49260
+      - --user-quota=24
+      - --total-quota=1200
+      - --no-multicast-peers
+      - --no-tcp-relay
+      - --denied-peer-ip=0.0.0.0-0.255.255.255
+      - --denied-peer-ip=10.0.0.0-10.255.255.255
+      - --denied-peer-ip=100.64.0.0-100.127.255.255
+      - --denied-peer-ip=127.0.0.0-127.255.255.255
+      - --denied-peer-ip=169.254.0.0-169.254.255.255
+      - --denied-peer-ip=172.16.0.0-172.31.255.255
+      - --denied-peer-ip=192.168.0.0-192.168.255.255
+      - --denied-peer-ip=::1
+      - --denied-peer-ip=fc00::-fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff
+      - --denied-peer-ip=fe80::-febf:ffff:ffff:ffff:ffff:ffff:ffff:ffff
+      - --log-file=stdout

@@ -62,6 +62,11 @@ func run(log *slog.Logger) error {
 		Origins:       origins,
 		SecureCookies: env("COOKIE_SECURE", "true") == "true",
 		ProxySecret:   os.Getenv("API_PROXY_SECRET"),
+		Voice: api.VoiceConfig{
+			STUNURLs:   envList("VOICE_STUN_URLS"),
+			TURNURLs:   envList("VOICE_TURN_URLS"),
+			TURNSecret: os.Getenv("VOICE_TURN_SECRET"),
+		},
 	}, repository, host, log)
 	if err != nil {
 		return err
@@ -95,4 +100,14 @@ func env(name, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func envList(name string) []string {
+	var values []string
+	for _, value := range strings.Split(os.Getenv(name), ",") {
+		if value = strings.TrimSpace(value); value != "" {
+			values = append(values, value)
+		}
+	}
+	return values
 }

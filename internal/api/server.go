@@ -45,6 +45,7 @@ type Config struct {
 	Origins       []string
 	SecureCookies bool
 	ProxySecret   string
+	Voice         VoiceConfig
 }
 
 type Server struct {
@@ -56,6 +57,7 @@ type Server struct {
 	dummyHash []byte
 	limitsMu  sync.Mutex
 	limits    map[string]window
+	voice     *voiceHub
 }
 
 type window struct {
@@ -64,6 +66,9 @@ type window struct {
 }
 
 func New(ctx context.Context, config Config, repository Repository, host *game.Host, log *slog.Logger) (*Server, error) {
+	if (len(config.Voice.TURNURLs) > 0) != (config.Voice.TURNSecret != "") {
+		return nil, fmt.Errorf("voice TURN URLs and shared secret must be configured together")
+	}
 	hash, err := bcrypt.GenerateFromPassword([]byte("unused-login-timing-placeholder"), 12)
 	if err != nil {
 		return nil, err
@@ -76,6 +81,7 @@ func New(ctx context.Context, config Config, repository Repository, host *game.H
 		ctx:       ctx,
 		dummyHash: hash,
 		limits:    map[string]window{},
+		voice:     newVoiceHub(),
 	}, nil
 }
 
@@ -96,6 +102,7 @@ func (s *Server) Handler() http.Handler {
 	r.Get("/api/matches/{code}", s.matchSnapshot)
 	r.Post("/api/matches/{code}/join", s.joinMatch)
 	r.Get("/api/matches/{code}/ws", s.socket)
+	r.Get("/api/matches/{code}/voice", s.voiceSocket)
 	return r
 }
 
@@ -373,14 +380,15 @@ func (s *Server) createMatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input struct {
-		Private bool         `json:"private"`
-		Config  rules.Config `json:"config"`
+		Private bool             `json:"private"`
+		Config  rules.Config     `json:"config"`
+		Options game.RoomOptions `json:"options"`
 	}
 	if decode(r, &input) != nil {
 		fail(w, 400, "Configuración inválida.")
 		return
 	}
-	code, err := s.host.Create(r.Context(), user, input.Config, input.Private)
+	code, err := s.host.Create(r.Context(), user, input.Config, input.Private, input.Options)
 	if err != nil {
 		fail(w, 400, "No se pudo crear la mesa. Revisa la configuración.")
 		s.log.Error("create match", "error", err)

@@ -77,6 +77,8 @@ events they already retained; discarded events from earlier hands cannot be rebu
 
 ## Production: Cloudflare Pages → NGINX → Go
 
+For voice signaling and the self-hosted TURN relay, see [voice deployment](deploy/VOICE.md).
+
 The public frontend and API use `https://retru.co.ve` and
 `https://retru.co.ve/api`. The frontend's server hook forwards `/api/*` to a
 separate backend origin. That origin needs DNS and a valid TLS certificate.

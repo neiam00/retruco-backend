@@ -95,6 +95,43 @@ func TestAccountAndMatchPersistence(t *testing.T) {
 	require.Equal(t, http.StatusOK, request(second, http.MethodPost, "/api/guest", map[string]string{"name": "Invitado de prueba"}, nil))
 	require.Equal(t, http.StatusOK, request(second, http.MethodPost, "/api/matches/"+created.Code+"/join", struct{}{}, nil))
 
+	// Voice authorizes speaking from room membership, not client-provided SDP.
+	spectator := newClient()
+	require.Equal(t, http.StatusOK, request(spectator, http.MethodPost, "/api/guest", map[string]string{"name": "Oyente"}, nil))
+	joinVoice := func(client *http.Client, code string, canSpeak bool) *websocket.Conn {
+		conn, _, dialErr := websocket.Dial(ctx, "ws"+strings.TrimPrefix(httpServer.URL, "http")+"/api/matches/"+code+"/voice", &websocket.DialOptions{
+			HTTPClient: client, HTTPHeader: http.Header{"Origin": []string{origin}},
+		})
+		require.NoError(t, dialErr)
+		t.Cleanup(func() { _ = conn.CloseNow() })
+		var welcome struct {
+			Type string `json:"type"`
+			Self struct {
+				ID       string `json:"id"`
+				CanSpeak bool   `json:"canSpeak"`
+			} `json:"self"`
+		}
+		require.NoError(t, wsjson.Read(ctx, conn, &welcome))
+		require.Equal(t, "welcome", welcome.Type)
+		require.NotEmpty(t, welcome.Self.ID)
+		assert.Equal(t, canSpeak, welcome.Self.CanSpeak)
+		return conn
+	}
+	playerVoice := joinVoice(first, created.Code, true)
+	listenerVoice := joinVoice(spectator, created.Code, false)
+	var openRoom struct {
+		Code string `json:"code"`
+	}
+	require.Equal(t, http.StatusCreated, request(second, http.MethodPost, "/api/matches", map[string]any{
+		"private": true,
+		"config":  rules.Config{Players: 2, Target: 12},
+		"options": game.RoomOptions{SpectatorsCanSpeak: true},
+	}, &openRoom))
+	speakerVoice := joinVoice(spectator, openRoom.Code, true)
+	require.NoError(t, playerVoice.CloseNow())
+	require.NoError(t, listenerVoice.CloseNow())
+	require.NoError(t, speakerVoice.CloseNow())
+
 	connection, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(httpServer.URL, "http")+"/api/matches/"+created.Code+"/ws", &websocket.DialOptions{
 		HTTPClient: first,
 		HTTPHeader: http.Header{"Origin": []string{origin}},

@@ -47,7 +47,13 @@ type GameEvent struct {
 	Event rules.Event `json:"event"`
 }
 
+// RoomOptions contains social and hosting choices, separate from game rules.
+type RoomOptions struct {
+	SpectatorsCanSpeak bool `json:"spectatorsCanSpeak"`
+}
+
 type Match struct {
+	Options      RoomOptions
 	Code         string
 	Private      bool
 	Config       rules.Config
@@ -65,6 +71,7 @@ type Match struct {
 }
 
 type Snapshot struct {
+	Options      RoomOptions  `json:"options"`
 	Code         string       `json:"code"`
 	Private      bool         `json:"private"`
 	Config       rules.Config `json:"config"`
@@ -198,7 +205,7 @@ func (h *Host) persist(ctx context.Context, match *Match, create bool) error {
 	return nil
 }
 
-func (h *Host) Create(ctx context.Context, user store.User, config rules.Config, private bool) (string, error) {
+func (h *Host) Create(ctx context.Context, user store.User, config rules.Config, private bool, options RoomOptions) (string, error) {
 	if (config.Players != 2 && config.Players != 4) || (config.Target != 12 && config.Target != 24) {
 		return "", fmt.Errorf("configuración inválida")
 	}
@@ -222,6 +229,7 @@ func (h *Host) Create(ctx context.Context, user store.User, config rules.Config,
 			continue
 		}
 		match := &Match{
+			Options:      options,
 			Code:         generated,
 			Private:      private,
 			Config:       config,
@@ -332,6 +340,7 @@ func (h *Host) Snapshot(code, userID string, perspective int) (Snapshot, error) 
 		perspective = 0
 	}
 	v := Snapshot{
+		Options:      m.Options,
 		Code:         code,
 		Private:      m.Private,
 		Config:       m.Config,

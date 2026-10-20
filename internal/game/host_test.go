@@ -92,7 +92,7 @@ func newHost(t *testing.T, private bool) (*game.Host, *memoryRepository, string,
 		{ID: "carla", Name: "Carla"},
 		{ID: "diego", Name: "Diego"},
 	}
-	code, err := host.Create(t.Context(), players[0], rules.Config{Players: 4, Target: 12}, private)
+	code, err := host.Create(t.Context(), players[0], rules.Config{Players: 4, Target: 12}, private, game.RoomOptions{})
 	require.NoError(t, err)
 	for _, player := range players[1:] {
 		require.NoError(t, host.Join(t.Context(), code, player))
