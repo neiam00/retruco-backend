@@ -174,6 +174,9 @@ func Apply(s State, seat int, command Command) (State, []Event, error) {
 	if seat < 0 || seat >= s.Config.Players || s.Phase == MatchOver {
 		return s, nil, fmt.Errorf("invalid player or finished match")
 	}
+	if command.Declaration == "a_ley" && s.Round > 0 {
+		return s, nil, fmt.Errorf("a ley is only available in the first round")
+	}
 	next := s
 	if s.Pending != nil {
 		pending := *s.Pending
