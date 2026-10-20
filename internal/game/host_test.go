@@ -140,7 +140,7 @@ func TestDuplicateCommandsAndReconnectDoNotResetTheClock(t *testing.T) {
 	host, repository, code, players := newHost(t, false)
 	view := cut(t, host, code, players)
 	turn := view.State.Turn
-	input := game.Input{ID: "first-card", Revision: view.State.Revision, Command: rules.Command{Type: "play", Card: 0}}
+	input := game.Input{ID: "first-card", Revision: view.State.Revision, Command: rules.Command{Type: "play", Card: 0, Declaration: "a_ley"}}
 	require.NoError(t, host.Handle(t.Context(), code, players[turn], input))
 	after, err := host.Snapshot(code, players[turn].ID, turn)
 	require.NoError(t, err)
@@ -149,6 +149,12 @@ func TestDuplicateCommandsAndReconnectDoNotResetTheClock(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, after.State.Revision, reconnected.State.Revision)
 	assert.Equal(t, after.Deadline, reconnected.Deadline)
+	require.NotEmpty(t, after.Events)
+	assert.Equal(t, after.Events, reconnected.Events, "retrying a move must not duplicate its public announcement")
+	assert.Equal(t, "a_ley", after.Events[len(after.Events)-1].Event.Text)
+	spectator, err := host.Snapshot(code, "spectator", (turn+1)%4)
+	require.NoError(t, err)
+	assert.Equal(t, after.Events, spectator.Events, "declarations are public across perspectives")
 
 	restored := game.New(repository, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	require.NoError(t, restored.Restore(t.Context()))
@@ -156,6 +162,7 @@ func TestDuplicateCommandsAndReconnectDoNotResetTheClock(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, after.State, restarted.State)
 	assert.True(t, after.Deadline.Equal(restarted.Deadline))
+	assert.Equal(t, after.Events, restarted.Events, "reconnect and restore retain the same public announcements")
 
 	input.ID = "stale-command"
 	require.Error(t, host.Handle(t.Context(), code, players[turn], input))
@@ -176,4 +183,50 @@ func TestPersistenceFailureDoesNotPublishAnUncommittedMove(t *testing.T) {
 	assert.Equal(t, before.State, after.State)
 	assert.Equal(t, before.Deadline, after.Deadline)
 	assert.Equal(t, before.Sequence, after.Sequence)
+}
+
+func TestCantoInterruptionAndResumptionEachReceiveThirtySeconds(t *testing.T) {
+	host, repository, code, players := newHost(t, false)
+	view := cut(t, host, code, players)
+	caller := view.State.Turn
+	responder := (caller + 1) % len(players)
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	// Resume from a valid saved match with only five seconds left. This checks
+	// that transitions create a fresh window rather than inheriting that clock.
+	shortenSavedWindow := func() {
+		var saved game.Match
+		require.NoError(t, json.Unmarshal(repository.payloads[code], &saved))
+		saved.Deadline = time.Now().Add(5 * time.Second)
+		payload, err := json.Marshal(saved)
+		require.NoError(t, err)
+		repository.payloads[code] = payload
+		host = game.New(repository, log)
+		require.NoError(t, host.Restore(t.Context()))
+	}
+	act := func(id string, seat int, command rules.Command) game.Snapshot {
+		before, err := host.Snapshot(code, players[seat].ID, seat)
+		require.NoError(t, err)
+		require.NoError(t, host.Handle(t.Context(), code, players[seat], game.Input{
+			ID: id, Revision: before.State.Revision, Command: command,
+		}))
+		after, err := host.Snapshot(code, players[seat].ID, seat)
+		require.NoError(t, err)
+		assert.InDelta(t, 30, after.Deadline.Sub(after.ServerTime).Seconds(), 1)
+		return after
+	}
+	shortenSavedWindow()
+	act("truco", caller, rules.Command{Type: "call", Kind: "truco", Declaration: "con_mi_flor"})
+	shortenSavedWindow()
+	interrupted := act("interrupt", responder, rules.Command{Type: "call", Kind: "ley_envido"})
+	require.NotNil(t, interrupted.State.Suspended)
+	shortenSavedWindow()
+	resumed := act("accept-envido", caller, rules.Command{Type: "respond", Kind: "accept", Mode: "sin_ley", Declaration: "con_mi_flor"})
+	require.NotNil(t, resumed.State.Pending)
+	assert.Equal(t, "truco", resumed.State.Pending.Kind)
+	assert.Nil(t, resumed.State.Suspended)
+	shortenSavedWindow()
+	playing := act("accept-truco", responder, rules.Command{Type: "respond", Kind: "accept", Declaration: "con_mi_flor"})
+	assert.Nil(t, playing.State.Pending)
+	assert.Equal(t, caller, playing.State.Turn)
 }

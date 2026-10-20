@@ -172,7 +172,12 @@ func (s *State) burnTeamFlor(team int) {
 }
 
 func (s *State) declareCanto(seat int, declaration string) {
-	if s.Config.FlorRequired && declaration != "con_mi_flor" && declaration != "con_flor" {
+	hasFlorPrefix := declaration == "con_mi_flor" || declaration == "con_flor"
+	player := &s.Players[seat]
+	if hasFlorPrefix && player.FlorValid && !player.Holding.Receta {
+		player.FlorDeclared = true
+	}
+	if s.Config.FlorRequired && !hasFlorPrefix {
 		s.burnFlor(seat)
 	}
 }

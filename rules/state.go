@@ -107,9 +107,14 @@ type Command struct {
 }
 
 type Event struct {
-	Type string `json:"type"`
-	Seat int    `json:"seat"`
-	Text string `json:"text,omitempty"`
+	Type      string `json:"type"`
+	Seat      int    `json:"seat"`
+	Text      string `json:"text,omitempty"`
+	Kind      string `json:"kind,omitempty"`
+	Canto     string `json:"canto,omitempty"`
+	Amount    int    `json:"amount,omitempty"`
+	Mode      string `json:"mode,omitempty"`
+	Automatic bool   `json:"automatic,omitempty"`
 }
 
 func (s State) Team(seat int) int  { return seat % 2 }
@@ -203,7 +208,28 @@ func Apply(s State, seat int, command Command) (State, []Event, error) {
 		return s, nil, err
 	}
 	next.Revision++
-	return next, []Event{{Type: command.Type, Seat: seat, Text: command.Declaration}}, nil
+	return next, []Event{publicEvent(seat, command, s.Pending)}, nil
+}
+
+// Public events describe declarations and negotiations. They never contain a
+// hand, card index, timeout choice, or arbitrary client-supplied text.
+func publicEvent(seat int, command Command, pending *Wager) Event {
+	event := Event{Type: command.Type, Seat: seat}
+	switch command.Declaration {
+	case "flor", "a_ley", "presento_flor", "flor_flor", "con_mi_flor", "con_flor":
+		event.Text = command.Declaration
+	}
+	if command.Type == "call" || command.Type == "respond" {
+		event.Kind = command.Kind
+		event.Amount = command.Amount
+		if command.Mode == "con_ley" || command.Mode == "sin_ley" {
+			event.Mode = command.Mode
+		}
+		if pending != nil {
+			event.Canto = pending.Kind
+		}
+	}
+	return event
 }
 
 // Timeout is a host-only entry point. choice supplies secure random selection:
@@ -219,7 +245,12 @@ func Timeout(s State, choice int) (State, []Event, error) {
 		seat := (s.Pending.Caller + 1) % 2
 		// A team timeout has no individual speaker; ordinary flores survive.
 		// Flor-contest refusal still invalidates the team's ordinary flores.
-		return Apply(s, seat, Command{Type: "respond", Kind: "decline", Declaration: "con_mi_flor"})
+		next, events, err := Apply(s, seat, Command{Type: "respond", Kind: "decline", Declaration: "con_mi_flor"})
+		if len(events) > 0 {
+			events[0].Automatic = true
+			events[0].Text = ""
+		}
+		return next, events, err
 	}
 	remaining := s.Remaining(s.Turn)
 	if choice < 0 || choice >= len(remaining) {
@@ -236,7 +267,7 @@ func Timeout(s State, choice int) (State, []Event, error) {
 		return s, nil, err
 	}
 	next.Revision++
-	return next, []Event{{Type: "timeout", Seat: s.Turn}}, nil
+	return next, []Event{{Type: "timeout", Seat: s.Turn, Automatic: true}}, nil
 }
 
 func (s State) Remaining(seat int) []int {

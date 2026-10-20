@@ -41,6 +41,12 @@ type Signal struct {
 	Visible [4]bool `json:"-"`
 }
 
+type GameEvent struct {
+	ID    uint64      `json:"id"`
+	Hand  int         `json:"hand"`
+	Event rules.Event `json:"event"`
+}
+
 type Match struct {
 	Code         string
 	Private      bool
@@ -54,6 +60,7 @@ type Match struct {
 	Signals      []Signal `json:"-"`
 	LastActivity time.Time
 	Expired      bool
+	Events       []GameEvent
 }
 
 type Snapshot struct {
@@ -69,6 +76,7 @@ type Snapshot struct {
 	Chat        []Chat       `json:"chat"`
 	Signals     []Signal     `json:"signals"`
 	Sequence    uint64       `json:"sequence"`
+	Events      []GameEvent  `json:"events"`
 }
 
 type Host struct {
@@ -266,6 +274,7 @@ func clone(m *Match) *Match {
 	next.Seats = append([]Seat{}, m.Seats...)
 	next.Chat = append([]Chat{}, m.Chat...)
 	next.Signals = append([]Signal{}, m.Signals...)
+	next.Events = append([]GameEvent{}, m.Events...)
 	next.Recent = make(map[string]uint64, len(m.Recent))
 	for key, value := range m.Recent {
 		next.Recent[key] = value
@@ -323,6 +332,7 @@ func (h *Host) Snapshot(code, userID string, perspective int) (Snapshot, error) 
 		Chat:        append([]Chat{}, m.Chat...),
 		Signals:     []Signal{},
 		Sequence:    m.Sequence,
+		Events:      append([]GameEvent{}, m.Events...),
 	}
 	if m.State != nil {
 		view := rules.ViewFor(*m.State, perspective, seat < 0)
@@ -443,11 +453,12 @@ func (h *Host) Handle(ctx context.Context, code string, user store.User, input I
 			if input.Revision != m.State.Revision {
 				return fmt.Errorf("la mesa cambió. Revisa el estado actualizado")
 			}
-			state, _, err := rules.Apply(*m.State, seat, input.Command)
+			state, events, err := rules.Apply(*m.State, seat, input.Command)
 			if err != nil {
 				return fmt.Errorf("esa jugada no está disponible ahora")
 			}
 			next.State = &state
+			next.recordEvents(events)
 			next.Deadline = time.Now().Add(30 * time.Second)
 			if state.Phase == rules.HandOver {
 				next.Deadline = time.Now().Add(5 * time.Second)
@@ -469,6 +480,19 @@ func (h *Host) Handle(ctx context.Context, code string, user store.User, input I
 
 func validSignal(signal string) bool {
 	return signal == "perico" || signal == "perica" || signal == "seven_spades" || signal == "seven_coins" || signal == "receta"
+}
+
+func (m *Match) recordEvents(events []rules.Event) {
+	for _, event := range events {
+		m.Events = append(m.Events, GameEvent{
+			ID:    m.Sequence + 1,
+			Hand:  m.State.HandNumber,
+			Event: event,
+		})
+	}
+	if len(m.Events) > 24 {
+		m.Events = m.Events[len(m.Events)-24:]
+	}
 }
 
 func (h *Host) Subscribe(code string) (<-chan struct{}, func()) {
@@ -524,6 +548,7 @@ func (h *Host) Run(ctx context.Context) {
 func (h *Host) expire(ctx context.Context, m *Match) error {
 	next := clone(m)
 	var state rules.State
+	var events []rules.Event
 	var err error
 	if m.State.Phase == rules.HandOver {
 		deck, drawErr := shuffledDeck()
@@ -532,6 +557,7 @@ func (h *Host) expire(ctx context.Context, m *Match) error {
 		}
 		state, err = rules.StartHand(*m.State, deck)
 		next.Signals = nil
+		next.Events = nil
 	} else {
 		choice := 0
 		if m.State.Phase == rules.Cutting {
@@ -543,12 +569,13 @@ func (h *Host) expire(ctx context.Context, m *Match) error {
 		if err != nil {
 			return err
 		}
-		state, _, err = rules.Timeout(*m.State, choice)
+		state, events, err = rules.Timeout(*m.State, choice)
 	}
 	if err != nil {
 		return err
 	}
 	next.State = &state
+	next.recordEvents(events)
 	next.Sequence++
 	next.Deadline = time.Now().Add(30 * time.Second)
 	if state.Phase == rules.HandOver {

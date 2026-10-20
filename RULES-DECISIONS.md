@@ -22,6 +22,8 @@ clarifications override that document where they differ (2026-10-19):
 - Accepted envido reveals each player's comparison value at settlement, without
   revealing otherwise concealed cards.
 - Unstarted tables expire after 24 hours without activity.
+- Saying "Con mi flor" while calling or answering a canto counts as declaring
+  that valid ordinary flor for later flor-contest eligibility.
 
 Seats increase counter-clockwise. The dealer's right neighbor is mano; the left
 neighbor cuts and receives the first dealt card. Four-player teammates sit opposite.
