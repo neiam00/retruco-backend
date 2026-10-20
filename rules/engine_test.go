@@ -8,6 +8,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestLeavingBeforeTheDealDoesNotRevealUninitializedCards(t *testing.T) {
+	state, err := rules.New(rules.Config{Players: 2, Target: 12}, 0, rules.Deck())
+	require.NoError(t, err)
+	finished, _, err := rules.Apply(state, 0, rules.Command{Type: "leave"})
+	require.NoError(t, err)
+	require.Equal(t, rules.MatchOver, finished.Phase)
+	view := rules.ViewFor(finished, 1, false)
+	assert.Nil(t, view.Vira)
+	assert.Empty(t, view.Hand)
+	assert.Nil(t, view.Holding)
+}
+
 // fixture deals supplied hands through the public cut/deal command. It builds
 // the input deck independently using the specification's draw order.
 func fixture(t *testing.T, required bool, hands ...[3]rules.Card) rules.State {

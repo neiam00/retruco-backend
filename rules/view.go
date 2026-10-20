@@ -66,7 +66,7 @@ func ViewFor(s State, perspective int, spectator bool) View {
 		suspended := *s.Suspended
 		v.Suspended = &suspended
 	}
-	if s.Phase != Cutting {
+	if s.Vira.Valid() {
 		vira := s.Vira
 		v.Vira = &vira
 	}
@@ -84,7 +84,7 @@ func ViewFor(s State, perspective int, spectator bool) View {
 		v.Seats = append(v.Seats, sv)
 	}
 	if perspective >= 0 && perspective < s.Config.Players {
-		if s.Phase != Cutting {
+		if s.Vira.Valid() {
 			player := s.Players[perspective]
 			for i, card := range player.Cards {
 				v.Hand = append(v.Hand, HandCard{Index: i, Card: card, Used: player.Used[i]})
