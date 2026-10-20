@@ -21,30 +21,31 @@ type HandCard struct {
 }
 
 type View struct {
-	Version        string     `json:"version"`
-	Revision       uint64     `json:"revision"`
-	Config         Config     `json:"config"`
-	Phase          Phase      `json:"phase"`
-	HandNumber     int        `json:"handNumber"`
-	Dealer         int        `json:"dealer"`
-	Mano           int        `json:"mano"`
-	Turn           int        `json:"turn"`
-	Round          int        `json:"round"`
-	Vira           *Card      `json:"vira,omitempty"`
-	Seats          []SeatView `json:"seats"`
-	Hand           []HandCard `json:"hand"`
-	Preview        *Card      `json:"preview,omitempty"`
-	Holding        *Holding   `json:"holding,omitempty"`
-	FlorValid      bool       `json:"florValid"`
-	Scores         [2]int     `json:"scores"`
-	Winner         int        `json:"winner"`
-	HandWinner     int        `json:"handWinner"`
-	Pending        *Wager     `json:"pending,omitempty"`
-	Suspended      *Wager     `json:"suspended,omitempty"`
-	TrucoValue     int        `json:"trucoValue"`
-	MandatoryStack bool       `json:"mandatoryStack"`
-	Legal          []Command  `json:"legal"`
-	Payouts        []Payout   `json:"payouts"`
+	Version        string         `json:"version"`
+	Revision       uint64         `json:"revision"`
+	Config         Config         `json:"config"`
+	Phase          Phase          `json:"phase"`
+	HandNumber     int            `json:"handNumber"`
+	Dealer         int            `json:"dealer"`
+	Mano           int            `json:"mano"`
+	Turn           int            `json:"turn"`
+	Round          int            `json:"round"`
+	Vira           *Card          `json:"vira,omitempty"`
+	Seats          []SeatView     `json:"seats"`
+	Hand           []HandCard     `json:"hand"`
+	Preview        *Card          `json:"preview,omitempty"`
+	Holding        *Holding       `json:"holding,omitempty"`
+	FlorValid      bool           `json:"florValid"`
+	Scores         [2]int         `json:"scores"`
+	Winner         int            `json:"winner"`
+	HandWinner     int            `json:"handWinner"`
+	Pending        *Wager         `json:"pending,omitempty"`
+	Suspended      *Wager         `json:"suspended,omitempty"`
+	TrucoValue     int            `json:"trucoValue"`
+	MandatoryStack bool           `json:"mandatoryStack"`
+	Legal          []Command      `json:"legal"`
+	Payouts        []Payout       `json:"payouts"`
+	EnvidoResults  []EnvidoResult `json:"envidoResults"`
 }
 
 // ViewFor authorizes one player's perspective. Spectators receive the same card
@@ -55,6 +56,7 @@ func ViewFor(s State, perspective int, spectator bool) View {
 		Round: s.Round, Scores: s.Scores, Winner: s.Winner, HandWinner: s.HandWinner,
 		TrucoValue: s.TrucoValue, MandatoryStack: s.MandatoryStack,
 		Payouts: append([]Payout{}, s.Payouts...), Seats: []SeatView{}, Hand: []HandCard{}, Legal: []Command{},
+		EnvidoResults: append([]EnvidoResult{}, s.EnvidoResults...),
 	}
 	if s.Pending != nil {
 		pending := *s.Pending

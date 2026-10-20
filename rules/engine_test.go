@@ -140,6 +140,9 @@ func TestMandatoryPegadoUsesTopFirstAndKeepsBottomHidden(t *testing.T) {
 	s := fixture(t, false,
 		[3]rules.Card{{rules.Clubs, 3}, {rules.Spades, 11}, {rules.Cups, 4}},
 		[3]rules.Card{{rules.Coins, 3}, {rules.Coins, 4}, {rules.Spades, 1}})
+	s = apply(t, s, 1, rules.Command{Type: "call", Kind: "envido"})
+	s = apply(t, s, 0, rules.Command{Type: "respond", Kind: "accept"})
+	assert.Empty(t, rules.ViewFor(s, 1, true).EnvidoResults, "accepted values stay private until settlement")
 	s = apply(t, s, 1, rules.Command{Type: "play", Card: 0})
 	s = apply(t, s, 0, rules.Command{Type: "play", Card: 0})
 	assert.True(t, s.MandatoryStack)
@@ -152,6 +155,10 @@ func TestMandatoryPegadoUsesTopFirstAndKeepsBottomHidden(t *testing.T) {
 	assert.Empty(t, v.Legal)
 	assert.Len(t, v.Hand, 3)
 	assert.Empty(t, rules.ViewFor(s, -1, true).Hand)
+	assert.Equal(t, []rules.EnvidoResult{
+		{Seat: 0, Value: 34, Eligible: true},
+		{Seat: 1, Value: 27, Eligible: true},
+	}, v.EnvidoResults, "only the final comparison values are revealed")
 }
 
 func TestTimeoutsBurnBothMandatoryCardsButNeverFirstCard(t *testing.T) {

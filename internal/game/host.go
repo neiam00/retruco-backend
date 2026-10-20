@@ -17,6 +17,7 @@ import (
 )
 
 type Repository interface {
+	CreateMatch(context.Context, string, []byte, []string) error
 	SaveMatch(context.Context, string, []byte, bool, []string) error
 	ActiveMatches(context.Context) ([][]byte, error)
 }
@@ -41,16 +42,18 @@ type Signal struct {
 }
 
 type Match struct {
-	Code     string
-	Private  bool
-	Config   rules.Config
-	Seats    []Seat
-	State    *rules.State
-	Deadline time.Time
-	Chat     []Chat
-	Sequence uint64
-	Recent   map[string]uint64
-	Signals  []Signal `json:"-"`
+	Code         string
+	Private      bool
+	Config       rules.Config
+	Seats        []Seat
+	State        *rules.State
+	Deadline     time.Time
+	Chat         []Chat
+	Sequence     uint64
+	Recent       map[string]uint64
+	Signals      []Signal `json:"-"`
+	LastActivity time.Time
+	Expired      bool
 }
 
 type Snapshot struct {
@@ -77,7 +80,12 @@ type Host struct {
 }
 
 func New(repository Repository, log *slog.Logger) *Host {
-	return &Host{matches: map[string]*Match{}, listeners: map[string]map[chan struct{}]bool{}, repository: repository, log: log}
+	return &Host{
+		matches:    map[string]*Match{},
+		listeners:  map[string]map[chan struct{}]bool{},
+		repository: repository,
+		log:        log,
+	}
 }
 
 func (h *Host) Restore(ctx context.Context) error {
@@ -92,6 +100,10 @@ func (h *Host) Restore(ctx context.Context) error {
 		}
 		if match.Recent == nil {
 			match.Recent = map[string]uint64{}
+		}
+		if match.LastActivity.IsZero() {
+			// Older snapshots predate lobby expiry. Give them one full window.
+			match.LastActivity = time.Now()
 		}
 		h.matches[match.Code] = &match
 	}
@@ -138,6 +150,10 @@ func matchCode() (string, error) {
 }
 
 func (h *Host) save(ctx context.Context, match *Match) error {
+	return h.persist(ctx, match, false)
+}
+
+func (h *Host) persist(ctx context.Context, match *Match, create bool) error {
 	payload, err := json.Marshal(match)
 	if err != nil {
 		return err
@@ -146,10 +162,18 @@ func (h *Host) save(ctx context.Context, match *Match) error {
 	for _, seat := range match.Seats {
 		members = append(members, seat.ID)
 	}
-	finished := match.State != nil && match.State.Phase == rules.MatchOver
+	finished := match.Expired || (match.State != nil && match.State.Phase == rules.MatchOver)
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	if err := h.repository.SaveMatch(ctx, match.Code, payload, finished, members); err != nil {
+	if create {
+		err = h.repository.CreateMatch(ctx, match.Code, payload, members)
+	} else {
+		err = h.repository.SaveMatch(ctx, match.Code, payload, finished, members)
+	}
+	if errors.Is(err, store.ErrMatchCodeInUse) {
+		return err
+	}
+	if err != nil {
 		h.log.Error("persist match", "code", match.Code, "error", err)
 		return fmt.Errorf("no se pudo guardar la jugada. Inténtalo de nuevo")
 	}
@@ -162,26 +186,42 @@ func (h *Host) Create(ctx context.Context, user store.User, config rules.Config,
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if len(h.matches) >= 1000 {
+	active := 0
+	for _, match := range h.matches {
+		if match.State == nil || match.State.Phase != rules.MatchOver {
+			active++
+		}
+	}
+	if active >= 1000 {
 		return "", fmt.Errorf("no hay espacio para más mesas en este momento")
 	}
-	var code string
-	for {
+	for range 10 {
 		generated, err := matchCode()
 		if err != nil {
 			return "", err
 		}
-		if h.matches[generated] == nil {
-			code = generated
-			break
+		if h.matches[generated] != nil {
+			continue
 		}
+		match := &Match{
+			Code:         generated,
+			Private:      private,
+			Config:       config,
+			Seats:        []Seat{{ID: user.ID, Name: user.Name}},
+			Recent:       map[string]uint64{},
+			Chat:         []Chat{},
+			Sequence:     1,
+			LastActivity: time.Now(),
+		}
+		if err := h.persist(ctx, match, true); errors.Is(err, store.ErrMatchCodeInUse) {
+			continue
+		} else if err != nil {
+			return "", err
+		}
+		h.matches[generated] = match
+		return generated, nil
 	}
-	match := &Match{Code: code, Private: private, Config: config, Seats: []Seat{{ID: user.ID, Name: user.Name}}, Recent: map[string]uint64{}, Chat: []Chat{}, Sequence: 1}
-	if err := h.save(ctx, match); err != nil {
-		return "", err
-	}
-	h.matches[code] = match
-	return code, nil
+	return "", fmt.Errorf("no pudimos reservar un código de mesa. Inténtalo de nuevo")
 }
 
 func (h *Host) Join(ctx context.Context, code string, user store.User) error {
@@ -234,6 +274,7 @@ func clone(m *Match) *Match {
 }
 
 func (h *Host) commit(ctx context.Context, next *Match) error {
+	next.LastActivity = time.Now()
 	if err := h.save(ctx, next); err != nil {
 		return err
 	}
@@ -270,7 +311,19 @@ func (h *Host) Snapshot(code, userID string, perspective int) (Snapshot, error) 
 	if perspective < 0 || perspective >= len(m.Seats) {
 		perspective = 0
 	}
-	v := Snapshot{Code: code, Private: m.Private, Config: m.Config, Seats: append([]Seat{}, m.Seats...), Seat: seat, Perspective: perspective, Deadline: m.Deadline, ServerTime: time.Now(), Chat: append([]Chat{}, m.Chat...), Signals: []Signal{}, Sequence: m.Sequence}
+	v := Snapshot{
+		Code:        code,
+		Private:     m.Private,
+		Config:      m.Config,
+		Seats:       append([]Seat{}, m.Seats...),
+		Seat:        seat,
+		Perspective: perspective,
+		Deadline:    m.Deadline,
+		ServerTime:  time.Now(),
+		Chat:        append([]Chat{}, m.Chat...),
+		Signals:     []Signal{},
+		Sequence:    m.Sequence,
+	}
 	if m.State != nil {
 		view := rules.ViewFor(*m.State, perspective, seat < 0)
 		v.State = &view
@@ -301,7 +354,15 @@ func (h *Host) List() []Listing {
 		if m.Private || len(m.Seats) == 0 || (m.State != nil && m.State.Phase == rules.MatchOver) {
 			continue
 		}
-		list = append(list, Listing{Code: m.Code, Players: len(m.Seats), Capacity: m.Config.Players, Target: m.Config.Target, FlorRequired: m.Config.FlorRequired, Started: m.State != nil, Host: m.Seats[0].Name})
+		list = append(list, Listing{
+			Code:         m.Code,
+			Players:      len(m.Seats),
+			Capacity:     m.Config.Players,
+			Target:       m.Config.Target,
+			FlorRequired: m.Config.FlorRequired,
+			Started:      m.State != nil,
+			Host:         m.Seats[0].Name,
+		})
 	}
 	return list
 }
@@ -438,6 +499,16 @@ func (h *Host) Run(ctx context.Context) {
 		case now := <-ticker.C:
 			h.mu.Lock()
 			for _, m := range h.matches {
+				if m.State == nil && len(h.listeners[m.Code]) == 0 && now.Sub(m.LastActivity) >= 24*time.Hour {
+					next := clone(m)
+					next.Expired = true
+					if err := h.commit(ctx, next); err != nil {
+						h.log.Error("expire inactive lobby", "error", err)
+						continue
+					}
+					delete(h.matches, m.Code)
+					continue
+				}
 				if m.State == nil || m.Deadline.IsZero() || now.Before(m.Deadline) {
 					continue
 				}

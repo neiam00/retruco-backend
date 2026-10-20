@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"testing"
+	"time"
 
 	"github.com/neiam00/retruco-backend/internal/game"
 	"github.com/neiam00/retruco-backend/internal/store"
@@ -20,6 +21,13 @@ type memoryRepository struct {
 	fail     bool
 }
 
+func (repository *memoryRepository) CreateMatch(ctx context.Context, code string, payload []byte, members []string) error {
+	if _, exists := repository.payloads[code]; exists {
+		return store.ErrMatchCodeInUse
+	}
+	return repository.SaveMatch(ctx, code, payload, false, members)
+}
+
 func (repository *memoryRepository) SaveMatch(_ context.Context, code string, payload []byte, _ bool, _ []string) error {
 	if repository.fail {
 		return errors.New("storage unavailable")
@@ -31,9 +39,47 @@ func (repository *memoryRepository) SaveMatch(_ context.Context, code string, pa
 func (repository *memoryRepository) ActiveMatches(context.Context) ([][]byte, error) {
 	var payloads [][]byte
 	for _, payload := range repository.payloads {
+		var match game.Match
+		if err := json.Unmarshal(payload, &match); err != nil {
+			return nil, err
+		}
+		if match.Expired || (match.State != nil && match.State.Phase == rules.MatchOver) {
+			continue
+		}
 		payloads = append(payloads, append([]byte(nil), payload...))
 	}
 	return payloads, nil
+}
+
+func TestInactiveLobbyExpiresAndStaysExpiredAfterRestart(t *testing.T) {
+	repository := &memoryRepository{payloads: make(map[string][]byte)}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	old := game.Match{
+		Code:         "OLDM-1234",
+		Config:       rules.Config{Players: 2, Target: 12},
+		Seats:        []game.Seat{{ID: "ana", Name: "Ana"}},
+		LastActivity: time.Now().Add(-25 * time.Hour),
+	}
+	payload, err := json.Marshal(old)
+	require.NoError(t, err)
+	repository.payloads[old.Code] = payload
+	host := game.New(repository, log)
+	require.NoError(t, host.Restore(t.Context()))
+	ctx, cancel := context.WithCancel(t.Context())
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		host.Run(ctx)
+	}()
+	t.Cleanup(func() { cancel(); <-stopped })
+	require.Eventually(t, func() bool { return len(host.List()) == 0 }, time.Second, 10*time.Millisecond)
+	cancel()
+	<-stopped
+	_, err = host.Snapshot(old.Code, "ana", 0)
+	require.Error(t, err)
+	restored := game.New(repository, log)
+	require.NoError(t, restored.Restore(t.Context()))
+	assert.Empty(t, restored.List())
 }
 
 func newHost(t *testing.T, private bool) (*game.Host, *memoryRepository, string, []store.User) {

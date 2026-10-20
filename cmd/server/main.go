@@ -62,7 +62,14 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	httpServer := &http.Server{Addr: env("LISTEN_ADDR", "127.0.0.1:8080"), Handler: server.Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16384}
+	httpServer := &http.Server{
+		Addr:              env("LISTEN_ADDR", "127.0.0.1:8080"),
+		Handler:           server.Handler(),
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    16384,
+	}
 	go host.Run(ctx)
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- httpServer.ListenAndServe() }()

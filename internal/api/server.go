@@ -68,7 +68,15 @@ func New(ctx context.Context, config Config, repository Repository, host *game.H
 	if err != nil {
 		return nil, err
 	}
-	return &Server{config: config, store: repository, host: host, log: log, ctx: ctx, dummyHash: hash, limits: map[string]window{}}, nil
+	return &Server{
+		config:    config,
+		store:     repository,
+		host:      host,
+		log:       log,
+		ctx:       ctx,
+		dummyHash: hash,
+		limits:    map[string]window{},
+	}, nil
 }
 
 func (s *Server) Handler() http.Handler {

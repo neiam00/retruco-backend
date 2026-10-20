@@ -19,6 +19,9 @@ clarifications override that document where they differ (2026-10-19):
   Do not write chat text to application logs.
 - The public API remains under `https://retru.co.ve/api`; the frontend edge
   forwards it to the configured NGINX backend origin.
+- Accepted envido reveals each player's comparison value at settlement, without
+  revealing otherwise concealed cards.
+- Unstarted tables expire after 24 hours without activity.
 
 Seats increase counter-clockwise. The dealer's right neighbor is mano; the left
 neighbor cuts and receives the first dealt card. Four-player teammates sit opposite.

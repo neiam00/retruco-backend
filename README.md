@@ -58,6 +58,12 @@ to that process; PostgreSQL supplies durability across restarts. Redis would not
 solve cross-instance ownership by itself and is unnecessary for this P0 topology.
 Do not scale replicas until match routing and distributed ownership are designed.
 
+Unstarted tables expire after 24 hours without activity when no viewers remain
+connected. Their codes stay reserved in PostgreSQL, and account history marks
+them as expired. Completed matches do not consume the active-table capacity.
+Accepted envido reveals comparison values at settlement; concealed cards stay
+concealed. These behaviors follow the direct user clarifications.
+
 ## Production: Cloudflare Pages → NGINX → Go
 
 The public frontend and API use `https://retru.co.ve` and

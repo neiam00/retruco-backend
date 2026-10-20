@@ -7,6 +7,11 @@ func (s *State) settle(handWinner int) {
 	s.Payouts = nil
 	envidoWinner := s.EnvidoWinner
 	if s.EnvidoAccepted {
+		s.EnvidoResults = make([]EnvidoResult, 0, s.Config.Players)
+		for seat := 0; seat < s.Config.Players; seat++ {
+			value, eligible := s.envidoValue(seat)
+			s.EnvidoResults = append(s.EnvidoResults, EnvidoResult{Seat: seat, Value: value, Eligible: eligible})
+		}
 		envidoWinner = s.compareEnvido()
 		if s.Envido.Kind == "flor" && envidoWinner >= 0 {
 			s.burnTeamFlor(1 - envidoWinner)
@@ -69,19 +74,24 @@ func (s State) compareEnvido() int {
 	best, winner := -1, -1
 	for offset := 0; offset < s.Config.Players; offset++ {
 		seat := (s.Mano + offset) % s.Config.Players
-		p := s.Players[seat]
-		value := p.Holding.Envido
-		if s.Envido.Kind == "flor" {
-			if !p.FlorValid {
-				continue
-			}
-			value = p.Holding.Flor
-		} else if s.Envido.Mode == "con_ley" && p.FlorValid {
-			value = p.Holding.Flor
+		value, eligible := s.envidoValue(seat)
+		if !eligible {
+			continue
 		}
 		if value > best {
 			best, winner = value, s.Team(seat)
 		}
 	}
 	return winner
+}
+
+func (s State) envidoValue(seat int) (int, bool) {
+	player := s.Players[seat]
+	if s.Envido.Kind == "flor" {
+		return player.Holding.Flor, player.FlorValid
+	}
+	if s.Envido.Mode == "con_ley" && player.FlorValid {
+		return player.Holding.Flor, true
+	}
+	return player.Holding.Envido, true
 }

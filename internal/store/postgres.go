@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -16,6 +17,11 @@ type User struct {
 }
 
 type Postgres struct{ pool *pgxpool.Pool }
+
+var (
+	ErrMatchCodeInUse = errors.New("match code already exists")
+	ErrMatchNotFound  = errors.New("match does not exist")
+)
 
 func New(pool *pgxpool.Pool) *Postgres { return &Postgres{pool: pool} }
 
@@ -49,6 +55,16 @@ func (p *Postgres) DeleteSession(ctx context.Context, hash string) error {
 }
 
 func (p *Postgres) SaveMatch(ctx context.Context, code string, payload []byte, finished bool, members []string) error {
+	return p.persistMatch(ctx, code, payload, finished, members, false)
+}
+
+// CreateMatch reserves a code atomically. A finished match keeps its code so a
+// new lobby can never overwrite another account's historical match.
+func (p *Postgres) CreateMatch(ctx context.Context, code string, payload []byte, members []string) error {
+	return p.persistMatch(ctx, code, payload, false, members, true)
+}
+
+func (p *Postgres) persistMatch(ctx context.Context, code string, payload []byte, finished bool, members []string, create bool) error {
 	tx, err := p.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -57,8 +73,19 @@ func (p *Postgres) SaveMatch(ctx context.Context, code string, payload []byte, f
 		// Rollback is best-effort cleanup and is also called after a successful commit.
 		_ = tx.Rollback(ctx)
 	}()
-	if _, err = tx.Exec(ctx, `INSERT INTO matches(code,payload,finished) VALUES($1,$2,$3) ON CONFLICT(code) DO UPDATE SET payload=excluded.payload,finished=excluded.finished,updated_at=now()`, code, payload, finished); err != nil {
+	statement := `UPDATE matches SET payload=$2, finished=$3, updated_at=now() WHERE code=$1`
+	if create {
+		statement = `INSERT INTO matches(code,payload,finished) VALUES($1,$2,$3) ON CONFLICT(code) DO NOTHING`
+	}
+	result, err := tx.Exec(ctx, statement, code, payload, finished)
+	if err != nil {
 		return err
+	}
+	if result.RowsAffected() == 0 {
+		if create {
+			return ErrMatchCodeInUse
+		}
+		return ErrMatchNotFound
 	}
 	for _, member := range members {
 		if _, err = tx.Exec(ctx, `INSERT INTO match_members(match_code,user_id) VALUES($1,$2) ON CONFLICT DO NOTHING`, code, member); err != nil {
@@ -90,6 +117,7 @@ type HistoryEntry struct {
 	Scores    [2]int    `json:"scores"`
 	Winner    int       `json:"winner"`
 	Finished  bool      `json:"finished"`
+	Expired   bool      `json:"expired"`
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 
@@ -107,7 +135,8 @@ func (p *Postgres) History(ctx context.Context, userID string) ([]HistoryEntry, 
 			return nil, err
 		}
 		var match struct {
-			State *struct {
+			Expired bool
+			State   *struct {
 				Scores [2]int
 				Winner int
 			}
@@ -116,6 +145,7 @@ func (p *Postgres) History(ctx context.Context, userID string) ([]HistoryEntry, 
 			return nil, fmt.Errorf("decode match history: %w", err)
 		}
 		entry.Winner = -1
+		entry.Expired = match.Expired
 		if match.State != nil {
 			entry.Scores, entry.Winner = match.State.Scores, match.State.Winner
 		}

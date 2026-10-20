@@ -79,6 +79,14 @@ type State struct {
 	FlorClaimant   [2]int
 	MandatoryStack bool
 	Payouts        []Payout
+	EnvidoResults  []EnvidoResult
+}
+
+// EnvidoResult reveals only the value used at settlement, never hidden cards.
+type EnvidoResult struct {
+	Seat     int  `json:"seat"`
+	Value    int  `json:"value"`
+	Eligible bool `json:"eligible"`
 }
 
 type Payout struct {
@@ -136,10 +144,18 @@ func StartHand(s State, deck []Card) (State, error) {
 		dealer = s.right(dealer)
 	}
 	next := State{
-		Config: s.Config, Phase: Cutting, Revision: s.Revision + 1,
-		HandNumber: s.HandNumber + 1, Dealer: dealer, Scores: s.Scores,
-		Winner: -1, HandWinner: -1, TrucoValue: 1, TrucoVoice: -1,
-		EnvidoWinner: -1, FlorClaimant: [2]int{-1, -1},
+		Config:       s.Config,
+		Phase:        Cutting,
+		Revision:     s.Revision + 1,
+		HandNumber:   s.HandNumber + 1,
+		Dealer:       dealer,
+		Scores:       s.Scores,
+		Winner:       -1,
+		HandWinner:   -1,
+		TrucoValue:   1,
+		TrucoVoice:   -1,
+		EnvidoWinner: -1,
+		FlorClaimant: [2]int{-1, -1},
 	}
 	next.Mano = next.right(dealer)
 	next.Turn = next.left(dealer)
@@ -235,7 +251,11 @@ func (s State) Remaining(seat int) []int {
 
 func (s *State) deal(cut int) error {
 	deck := append(append(make([]Card, 0, 40), s.Deck[cut:]...), s.Deck[:cut]...)
-	draw := func() Card { card := deck[len(deck)-1]; deck = deck[:len(deck)-1]; return card }
+	draw := func() Card {
+		card := deck[len(deck)-1]
+		deck = deck[:len(deck)-1]
+		return card
+	}
 	counts := [4]int{}
 	if s.Config.Players == 4 {
 		for _, viewer := range []int{s.left(s.Dealer), s.Dealer} {
