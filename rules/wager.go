@@ -79,6 +79,9 @@ func (s *State) respond(seat int, c Command) error {
 	}
 	wager := *s.Pending
 	team := s.Team(seat)
+	if wager.Kind == "privo" {
+		return s.respondPrivo(seat, c)
+	}
 	choosesLey := wager.Kind == "ley_envido" && wager.Mode == "" &&
 		(c.Kind == "accept" || c.Kind == "raise" || c.Kind == "falta")
 	// LegalActions uses this validation too, so irrelevant modes must be

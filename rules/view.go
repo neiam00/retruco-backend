@@ -46,6 +46,8 @@ type View struct {
 	Legal          []Command      `json:"legal"`
 	Payouts        []Payout       `json:"payouts"`
 	EnvidoResults  []EnvidoResult `json:"envidoResults"`
+	Privando       [2]bool        `json:"privando"`
+	PrivoEnvido    []PrivoEnvido  `json:"privoEnvido"`
 }
 
 // ViewFor authorizes one player's perspective. Spectators receive the same card
@@ -57,6 +59,7 @@ func ViewFor(s State, perspective int, spectator bool) View {
 		TrucoValue: s.TrucoValue, MandatoryStack: s.MandatoryStack,
 		Payouts: append([]Payout{}, s.Payouts...), Seats: []SeatView{}, Hand: []HandCard{}, Legal: []Command{},
 		EnvidoResults: append([]EnvidoResult{}, s.EnvidoResults...),
+		Privando:      s.Privando, PrivoEnvido: s.privoAnnouncements(),
 	}
 	if s.Pending != nil {
 		pending := *s.Pending
@@ -125,6 +128,12 @@ func LegalActions(s State, seat int) []Command {
 		if _, _, err := Apply(s, seat, c); err == nil {
 			legal = append(legal, c)
 		}
+	}
+	if s.Pending != nil && s.Pending.Kind == "privo" {
+		for _, kind := range []string{"accept", "decline", "present_flor"} {
+			add(Command{Type: "respond", Kind: kind})
+		}
+		return legal
 	}
 	for _, declaration := range []string{"", "flor", "a_ley", "presento_flor", "flor_flor"} {
 		if s.MandatoryStack {

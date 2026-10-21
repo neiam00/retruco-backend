@@ -35,8 +35,8 @@ func (s *State) settle(handWinner int) {
 			}
 		}
 	}
-	// A ley is the user's explicit exception to the usual scoring order.
-	if s.Envido.Kind == "ley_envido" {
+	// A ley and privo settle envido before flor, stopping as soon as it wins.
+	if s.Envido.Kind == "ley_envido" || s.Envido.Kind == "privo" {
 		if s.award("envido", envido) || s.award("flor", flor) {
 			return
 		}

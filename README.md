@@ -127,6 +127,19 @@ including their hand and calling seat. Reconnecting clients receive this history
 grouped by hand in the interface. Older saved matches can recover only the recent
 events they already retained; discarded events from earlier hands cannot be rebuilt.
 
+At the next deal, a team one point from the target is **privando**. The server
+announces only its highest envido and pauses play for a fixed, unraiseable
+2-point envido. Accepting (`Privo y Truco`) leaves normal truco betting available;
+refusal or timeout awards the caller 1 point and ends the match. A privando
+team's flor wins immediately. The opposing flor holder may present it for
+exactly 3 points and end the hand without envido/truco, or play and retain flor
+under the usual declaration rules. If both teams priva, both announce and the
+envido is automatically accepted; normal envido tie order applies, and mano's
+team wins simultaneous flores. Played privo hands score envido, then flor, then
+truco, stopping when the match is won. Rules view version 2 exposes team-level
+`privando` and `privoEnvido`; automatic history events have an explicit `team`
+and seat -1. The updated browser CPU also accepts version-1 views during rollout.
+
 ## Production: Cloudflare Pages → NGINX → Go
 
 For automatic deployment on pushes to `master`, see

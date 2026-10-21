@@ -80,9 +80,43 @@ func TestBrowserProtocolRejectsMismatchesAndSupportsFullUint32Entropy(t *testing
 	require.Empty(t, response.Error)
 	require.NotNil(t, response.Command)
 	assert.Contains(t, view.Legal, *response.Command)
+	request.View.Version = "1"
+	assert.Empty(t, cpu.Decide(request).Error, "new browser engine supports hosts during rollout")
 	request.Version++
 	assert.NotEmpty(t, cpu.Decide(request).Error)
 	request.Version = cpu.ProtocolVersion
 	request.View.Version = "future-rules"
 	assert.NotEmpty(t, cpu.Decide(request).Error)
+}
+
+func TestCPURespondsToPrivoUsingOnlyItsHandAndTheAnnouncement(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		envido int
+		flor   bool
+		want   string
+	}{
+		{name: "higher envido", envido: 34, want: "accept"},
+		{name: "lower envido and weak cards", envido: 25, want: "decline"},
+		{name: "present flor", envido: 30, flor: true, want: "present_flor"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			vira := rules.Card{Suit: rules.Spades, Number: 4}
+			view := rules.View{
+				Version: rules.Version, Config: rules.Config{Players: 2, Target: 12},
+				Phase: rules.Playing, Vira: &vira, Holding: &rules.Holding{Envido: test.envido},
+				PrivoEnvido: []rules.PrivoEnvido{{Team: 0, Value: 33}},
+				Pending:     &rules.Wager{Kind: "privo", Caller: 0, Value: 2, Terminal: true},
+				Hand:        []rules.HandCard{{Index: 0, Card: rules.Card{Suit: rules.Coins, Number: 4}}},
+				Legal:       []rules.Command{{Type: "respond", Kind: "accept"}, {Type: "respond", Kind: "decline"}},
+			}
+			if test.flor {
+				view.Legal = append(view.Legal, rules.Command{Type: "respond", Kind: "present_flor"})
+			}
+			response := cpu.Decide(cpu.Request{Version: cpu.ProtocolVersion, Seat: 1, View: view})
+			require.Empty(t, response.Error)
+			require.NotNil(t, response.Command)
+			assert.Equal(t, test.want, response.Command.Kind)
+		})
+	}
 }

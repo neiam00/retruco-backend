@@ -172,6 +172,56 @@ func cut(t *testing.T, host *game.Host, code string, players []store.User) game.
 	return view
 }
 
+func TestPrivoAnnouncementsHaveUniqueIDsAndSurviveReconnectAndRestart(t *testing.T) {
+	repository := &memoryRepository{payloads: make(map[string][]byte)}
+	state, err := rules.New(rules.Config{Players: 2, Target: 12}, 0, rules.Deck())
+	require.NoError(t, err)
+	state.Scores = [2]int{11, 11}
+	// With dealer 0, seat 1 receives each pair's first card. These hands
+	// contain no flor, leaving a live match available for restart testing.
+	draws := []rules.Card{{rules.Cups, 7}, {rules.Clubs, 1}, {rules.Cups, 4},
+		{rules.Clubs, 6}, {rules.Coins, 3}, {rules.Coins, 2}, {rules.Spades, 4}}
+	used := map[rules.Card]bool{}
+	for _, card := range draws {
+		used[card] = true
+	}
+	for _, card := range rules.Deck() {
+		if !used[card] {
+			draws = append(draws, card)
+		}
+	}
+	for index, card := range draws {
+		state.Deck[(40-index)%40] = card // inverse of a one-card cut
+	}
+	match := game.Match{Code: "PRIV-1234", Config: state.Config, State: &state,
+		Seats:    []game.Seat{{ID: "ana", Name: "Ana"}, {ID: "beto", Name: "Beto"}},
+		Sequence: 1, Recent: map[string]uint64{}, Deadline: time.Now().Add(time.Minute)}
+	payload, err := json.Marshal(match)
+	require.NoError(t, err)
+	repository.payloads[match.Code] = payload
+	host := game.New(repository, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	require.NoError(t, host.Restore(t.Context()))
+	require.NoError(t, host.Handle(t.Context(), match.Code, store.User{ID: "beto"}, game.Input{
+		ID: "cut-privo", Revision: state.Revision, Command: rules.Command{Type: "cut", Cut: 1},
+	}))
+	view, err := host.Snapshot(match.Code, "ana", 0)
+	require.NoError(t, err)
+	require.Equal(t, rules.Playing, view.State.Phase)
+	require.Len(t, view.CantoHistory, 2)
+	assert.NotEqual(t, view.CantoHistory[0].ID, view.CantoHistory[1].ID)
+	for team, event := range view.CantoHistory {
+		require.NotNil(t, event.Event.Team)
+		assert.Equal(t, team, *event.Event.Team)
+		assert.Equal(t, -1, event.Event.Seat, "automatic team values do not identify their holder")
+	}
+	restored := game.New(repository, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	require.NoError(t, restored.Restore(t.Context()))
+	reconnected, err := restored.Snapshot(match.Code, "beto", 1)
+	require.NoError(t, err)
+	assert.Equal(t, view.CantoHistory, reconnected.CantoHistory)
+	assert.Equal(t, view.State.PrivoEnvido, reconnected.State.PrivoEnvido)
+}
+
 func TestSpectatorAndSignalViewsRespectTheSelectedPlayer(t *testing.T) {
 	host, _, code, players := newHost(t, true)
 	assert.Empty(t, host.List(), "private matches are absent from the public browser")

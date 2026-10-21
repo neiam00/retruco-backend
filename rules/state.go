@@ -2,7 +2,7 @@ package rules
 
 import "fmt"
 
-const Version = "1"
+const Version = "2"
 
 type Phase string
 
@@ -80,6 +80,7 @@ type State struct {
 	MandatoryStack bool
 	Payouts        []Payout
 	EnvidoResults  []EnvidoResult
+	Privando       [2]bool
 }
 
 // EnvidoResult reveals only the value used at settlement, never hidden cards.
@@ -115,6 +116,7 @@ type Event struct {
 	Amount    int    `json:"amount,omitempty"`
 	Mode      string `json:"mode,omitempty"`
 	Automatic bool   `json:"automatic,omitempty"`
+	Team      *int   `json:"team,omitempty"`
 }
 
 func (s State) Team(seat int) int  { return seat % 2 }
@@ -211,7 +213,20 @@ func Apply(s State, seat int, command Command) (State, []Event, error) {
 		return s, nil, err
 	}
 	next.Revision++
-	return next, []Event{publicEvent(seat, command, s.Pending)}, nil
+	events := []Event{publicEvent(seat, command, s.Pending)}
+	if command.Type == "cut" {
+		for _, announcement := range next.privoAnnouncements() {
+			team := announcement.Team
+			events = append(events, Event{Type: "privo", Seat: -1, Team: &team,
+				Kind: "envido", Amount: announcement.Value, Automatic: true})
+		}
+		if next.Phase == MatchOver {
+			team := next.Winner
+			events = append(events, Event{Type: "privo", Seat: -1, Team: &team,
+				Kind: "flor", Automatic: true})
+		}
+	}
+	return next, events, nil
 }
 
 // Public events describe declarations and negotiations. They never contain a
@@ -248,7 +263,11 @@ func Timeout(s State, choice int) (State, []Event, error) {
 		seat := (s.Pending.Caller + 1) % 2
 		// A team timeout has no individual speaker; ordinary flores survive.
 		// Flor-contest refusal still invalidates the team's ordinary flores.
-		next, events, err := Apply(s, seat, Command{Type: "respond", Kind: "decline", Declaration: "con_mi_flor"})
+		declaration := "con_mi_flor"
+		if s.Pending.Kind == "privo" {
+			declaration = ""
+		}
+		next, events, err := Apply(s, seat, Command{Type: "respond", Kind: "decline", Declaration: declaration})
 		if len(events) > 0 {
 			events[0].Automatic = true
 			events[0].Text = ""
@@ -320,5 +339,6 @@ func (s *State) deal(cut int) error {
 		s.Players[seat].FlorValid = holding.Flor > 0
 	}
 	s.Phase, s.Turn = Playing, s.Mano
+	s.beginPrivo()
 	return nil
 }

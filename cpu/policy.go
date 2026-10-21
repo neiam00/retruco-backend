@@ -25,7 +25,8 @@ type Response struct {
 // authoritative engine. Native and WebAssembly builds use this exact policy.
 func Decide(request Request) Response {
 	response := Response{Version: ProtocolVersion, Revision: request.View.Revision, Seat: request.Seat}
-	if request.Version != ProtocolVersion || request.View.Version != rules.Version {
+	// The updated browser engine can serve version-1 hosts during rollout.
+	if request.Version != ProtocolVersion || (request.View.Version != rules.Version && request.View.Version != "1") {
 		response.Error = "La versión del motor CPU no coincide. Recarga la página."
 		return response
 	}
@@ -147,6 +148,24 @@ func (p position) score(command rules.Command) int {
 }
 
 func (p position) responseScore(command rules.Command) int {
+	if p.view.Pending != nil && p.view.Pending.Kind == "privo" {
+		if command.Kind == "present_flor" {
+			return 200
+		}
+		announced := 0
+		for _, value := range p.view.PrivoEnvido {
+			if value.Team == p.view.Pending.Caller {
+				announced = value.Value
+			}
+		}
+		// Only use this CPU's authorized hand and the public announcement.
+		// Accept equal values too: mano or a teammate may win the comparison.
+		willing := p.view.Holding.Envido >= announced || p.strongCards >= 2
+		if command.Kind == "accept" && willing || command.Kind == "decline" && !willing {
+			return 100
+		}
+		return 20
+	}
 	if command.Kind == "flowers_no" {
 		return 200
 	}

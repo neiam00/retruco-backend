@@ -600,12 +600,21 @@ func validSignal(signal string) bool {
 }
 
 func (m *Match) recordEvents(events []rules.Event) {
+	// One command can announce both teams' privo values. Give every event a
+	// distinct stable ID, including across hands that clear the recent log.
+	nextID := m.Sequence + 1
+	for _, previous := range [][]GameEvent{m.Events, m.CantoHistory} {
+		if len(previous) > 0 {
+			nextID = max(nextID, previous[len(previous)-1].ID+1)
+		}
+	}
 	for _, event := range events {
 		record := GameEvent{
-			ID:    m.Sequence + 1,
+			ID:    nextID,
 			Hand:  m.State.HandNumber,
 			Event: event,
 		}
+		nextID++
 		m.Events = append(m.Events, record)
 		if isCanto(event) {
 			m.CantoHistory = append(m.CantoHistory, record)
@@ -617,7 +626,7 @@ func (m *Match) recordEvents(events []rules.Event) {
 }
 
 func isCanto(event rules.Event) bool {
-	return event.Type == "call" || event.Type == "respond" || event.Text != ""
+	return event.Type == "call" || event.Type == "respond" || event.Type == "privo" || event.Text != ""
 }
 
 func (h *Host) Subscribe(code string) (<-chan struct{}, func()) {
