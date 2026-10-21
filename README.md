@@ -185,6 +185,10 @@ The SDK uploader expects the 40 generated WebP faces and one back, writes
 `cards/*`, and sets `image/webp`. Upload these files before deploying a frontend
 that references their content-hashed filenames. Older object versions can remain
 available for clients still using the previous deployment.
+Card objects use `Cache-Control: public, max-age=31536000, immutable`. Always
+upload artwork changes under their newly generated content-hashed filenames;
+never overwrite an existing card URL with different bytes. Re-uploading existing
+generated files applies the policy to a bucket that still has older metadata.
 Keep the upstream attribution accessible alongside the deployed app. Configure
 the frontend's public `CARD_ASSET_ORIGIN` with the bucket/CDN origin and rebuild.
 Leave it empty to serve the bundled assets. Never place B2 keys in the frontend.

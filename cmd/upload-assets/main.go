@@ -72,7 +72,7 @@ func upload(ctx context.Context, bucket *b2.Bucket, path string) error {
 	object := bucket.Object("cards/" + filepath.Base(path))
 	writer := object.NewWriter(uploadContext, b2.WithAttrsOption(&b2.Attrs{
 		ContentType: "image/webp",
-		Info:        map[string]string{"b2-cache-control": "public, max-age=86400"},
+		Info:        map[string]string{"b2-cache-control": "public, max-age=31536000, immutable"},
 	}))
 	if _, err := io.Copy(writer, file); err != nil {
 		cancel()
