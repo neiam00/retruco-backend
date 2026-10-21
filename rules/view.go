@@ -127,8 +127,14 @@ func LegalActions(s State, seat int) []Command {
 		}
 	}
 	for _, declaration := range []string{"", "flor", "a_ley", "presento_flor", "flor_flor"} {
+		if s.MandatoryStack {
+			add(Command{Type: "burn", Declaration: declaration})
+		}
 		for _, card := range s.Remaining(seat) {
 			add(Command{Type: "play", Card: card, Declaration: declaration})
+			if !s.MandatoryStack {
+				add(Command{Type: "burn", Card: card, Declaration: declaration})
+			}
 			for _, top := range s.Remaining(seat) {
 				if top != card {
 					add(Command{Type: "stack", Card: card, Top: top, Declaration: declaration})

@@ -6,11 +6,22 @@ func (s *State) play(seat int, command Command, timeout bool) error {
 	if s.Phase != Playing || s.Pending != nil || s.Turn != seat {
 		return fmt.Errorf("not your card turn")
 	}
+	voluntaryBurn := command.Type == "burn"
+	if voluntaryBurn && s.Round == 0 {
+		return fmt.Errorf("first-round cards cannot be burned")
+	}
+	if voluntaryBurn && s.MandatoryStack {
+		remaining := s.Remaining(seat)
+		if len(remaining) != 2 {
+			return fmt.Errorf("must burn both remaining cards")
+		}
+		command.Card, command.Top = remaining[0], remaining[1]
+	}
 	p := &s.Players[seat]
 	if command.Card < 0 || command.Card >= 3 || p.Used[command.Card] {
 		return fmt.Errorf("card unavailable")
 	}
-	stack := command.Type == "stack"
+	stack := command.Type == "stack" || voluntaryBurn && s.MandatoryStack
 	if s.MandatoryStack && !stack {
 		return fmt.Errorf("must play pegado")
 	}
@@ -20,16 +31,17 @@ func (s *State) play(seat int, command Command, timeout bool) error {
 	if !timeout || s.Round == 0 {
 		s.declareCards(seat, command.Declaration, stack)
 	}
+	burned := voluntaryBurn || timeout && s.Round > 0
 	p.Used[command.Card] = true
-	p.Plays[s.Round] = Play{Card: p.Cards[command.Card], Present: true, Burned: timeout && s.Round > 0}
+	p.Plays[s.Round] = Play{Card: p.Cards[command.Card], Present: true, Burned: burned}
 	if s.Round == 0 {
 		p.FirstPlayed = true
 	}
 	if stack {
 		p.Used[command.Top] = true
 		p.Stacked = true
-		p.Plays[1].Concealed = !timeout
-		p.Plays[2] = Play{Card: p.Cards[command.Top], Present: true, Burned: timeout}
+		p.Plays[1].Concealed = !burned
+		p.Plays[2] = Play{Card: p.Cards[command.Top], Present: true, Burned: burned}
 	}
 	s.advanceCards()
 	return nil

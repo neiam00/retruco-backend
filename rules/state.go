@@ -198,7 +198,7 @@ func Apply(s State, seat int, command Command) (State, []Event, error) {
 		} else {
 			err = next.deal(command.Cut)
 		}
-	case "play", "stack":
+	case "play", "stack", "burn":
 		err = next.play(seat, command, false)
 	case "call":
 		err = next.call(seat, command)

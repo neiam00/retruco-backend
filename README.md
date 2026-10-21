@@ -46,6 +46,13 @@ runner; Node must be installed for the latter.
 
 ## Architecture and privacy
 
+Players may send `{"type":"burn","card":1}` on their card turn in the second
+or third round. The selected card is consumed, stays face down in every public
+table view, and cannot win the round. During mandatory pegado, `{"type":"burn"}`
+burns both remaining cards. Normal flor declarations still apply through the
+`declaration` field, including `flor_flor` for the two-card burn. Timeouts keep
+their existing declaration behavior.
+
 CPU rooms accept `options.cpuSeats` when creating a match: `[1]` for 1v1, or
 any distinct subset of seats 1–3 for 2v2. Seat 0 belongs to the creator; all
 unselected seats remain available to humans. Teams are alternating seats.
