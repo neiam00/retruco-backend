@@ -179,8 +179,15 @@ func TestPrivoAnnouncementsHaveUniqueIDsAndSurviveReconnectAndRestart(t *testing
 	state.Scores = [2]int{11, 11}
 	// With dealer 0, seat 1 receives each pair's first card. These hands
 	// contain no flor, leaving a live match available for restart testing.
-	draws := []rules.Card{{rules.Cups, 7}, {rules.Clubs, 1}, {rules.Cups, 4},
-		{rules.Clubs, 6}, {rules.Coins, 3}, {rules.Coins, 2}, {rules.Spades, 4}}
+	draws := []rules.Card{
+		{Suit: rules.Cups, Number: 7},
+		{Suit: rules.Clubs, Number: 1},
+		{Suit: rules.Cups, Number: 4},
+		{Suit: rules.Clubs, Number: 6},
+		{Suit: rules.Coins, Number: 3},
+		{Suit: rules.Coins, Number: 2},
+		{Suit: rules.Spades, Number: 4},
+	}
 	used := map[rules.Card]bool{}
 	for _, card := range draws {
 		used[card] = true
