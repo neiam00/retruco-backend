@@ -93,10 +93,14 @@ jobs:
           set -euo pipefail
           archive="$RUNNER_TEMP/retruco-source.tar.gz"
           remote_archive="/tmp/retruco-deploy-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.tar.gz"
+          remote_script="/tmp/retruco-deploy-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.sh"
           git archive --format=tar.gz --output="$archive" HEAD -- . ':(exclude).env' ':(exclude).env.*'
           scp -F "$RUNNER_TEMP/retruco-ssh/config" "$archive" "retruco-vps:$remote_archive"
-          ssh -F "$RUNNER_TEMP/retruco-ssh/config" retruco-vps \
-            "bash -s -- $remote_archive $GITHUB_SHA" < deploy/deploy-vps.sh
+          scp -F "$RUNNER_TEMP/retruco-ssh/config" deploy/deploy-vps.sh "retruco-vps:$remote_script"
+          # Keep the script separate from command stdin, and independently
+          # require the success marker before accepting a successful SSH exit.
+          ssh -n -F "$RUNNER_TEMP/retruco-ssh/config" retruco-vps \
+            "trap 'rm -f $remote_script' EXIT; bash $remote_script $remote_archive $GITHUB_SHA && test \"\$(cat /opt/retruco/backend/.deployed-revision)\" = $GITHUB_SHA"
 
       - name: Remove runner credentials
         if: always()

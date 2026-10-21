@@ -87,7 +87,9 @@ the matching `API_PROXY_SECRET`.
    builder stage, and runs `go test ./...` and `go vet ./...` with that toolchain.
    PostgreSQL integration tests remain opt-in; this job does not supply
    `DATABASE_TEST_URL`.
-2. Archives the exact pushed commit and uploads it over verified SSH.
+2. Archives the exact pushed commit and uploads it and the deployment script over
+   verified SSH. Runs the script from a file with stdin closed so Docker cannot
+   consume the remaining deployment commands.
 3. Takes a server-side lock and synchronizes application source, removing obsolete
    source files. Preserves `.env*`, `.git`, `.agents`, `.agent`, `compose.vps.yaml`,
    `deploy/nginx.vps.conf.template`, `.deployed-revision`, `bin`, and `coverage.out`.
@@ -96,8 +98,10 @@ the matching `API_PROXY_SECRET`.
    applies migrations. This creates a maintenance window and disconnects games.
 6. Starts the new API, checks it locally using the existing proxy secret,
    updates TURN if configured, and recreates NGINX.
-7. Checks `https://retru.co.ve/api/health` and records the deployed SHA in
-   `/opt/retruco/backend/.deployed-revision`.
+7. Checks `https://retru.co.ve/api/health` with a unique deployment query to avoid
+   cached responses, and records the deployed SHA in
+   `/opt/retruco/backend/.deployed-revision`. The workflow independently verifies
+   that marker. An early script exit cannot be reported as a successful deployment.
 
 Treat the backend directory as managed application source. Put other server-only
 files outside it unless they are explicitly protected above. The synchronization

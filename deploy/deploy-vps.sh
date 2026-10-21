@@ -28,13 +28,18 @@ flock -n 9 || { echo "Another deployment is already running on this VPS" >&2; ex
 stage="$(mktemp -d "$parent_dir/.deploy-source.XXXXXX")"
 api_stopped=0
 migration_started=0
+deployment_complete=0
 cleanup() {
   status=$?
   trap - EXIT
+  if (( status == 0 && deployment_complete == 0 )); then
+    echo "Deployment exited before completing all health checks." >&2
+    status=1
+  fi
   if (( status != 0 )); then
     if (( api_stopped == 1 && migration_started == 0 )); then
       # The schema is unchanged: restart the existing container, without recreating it.
-      "$compose" start api || true
+      "$compose" up -d --no-build --no-deps --no-recreate api || true
     fi
     echo "Deployment failed. Inspect the VPS; no database/schema rollback was attempted." >&2
     if (( migration_started == 1 )); then
@@ -77,7 +82,9 @@ backup="$backup_dir/retruco-$(date -u +%Y%m%dT%H%M%SZ)-${revision:0:12}-$$.dump"
 "$compose" stop api
 api_stopped=1
 # Stop writes before taking the recovery snapshot and applying migrations.
-if ! "$compose" exec -T db pg_dump -U retruco -d retruco -Fc > "$backup.partial"; then
+# Compose otherwise forwards stdin, which may contain the rest of a script
+# streamed over SSH. Backup and migration commands never need interactive input.
+if ! "$compose" exec -T db pg_dump -U retruco -d retruco -Fc < /dev/null > "$backup.partial"; then
   rm -f "$backup.partial"
   exit 1
 fi
@@ -86,7 +93,7 @@ mv "$backup.partial" "$backup"
 echo "Database backup saved at $backup"
 
 migration_started=1
-"$compose" run --rm --no-deps migrate
+"$compose" run --rm --no-deps migrate < /dev/null
 "$compose" up -d --no-build --no-deps api
 api_stopped=0
 
@@ -95,7 +102,7 @@ for ((attempt = 1; attempt <= 30; attempt++)); do
   # Read the proxy secret inside the container; never send it through Actions logs.
   if "$compose" exec -T api sh -c \
     'wget -q -O /dev/null --header="X-Retruco-Proxy-Secret: $API_PROXY_SECRET" http://127.0.0.1:8080/api/health' \
-    > /dev/null 2>&1; then
+    < /dev/null > /dev/null 2>&1; then
     healthy=1
     break
   fi
@@ -110,6 +117,8 @@ fi
 # Recreate NGINX to pick up template changes and resolve the new API address.
 "$compose" up -d --no-build --no-deps --force-recreate proxy
 curl --fail --silent --show-error --retry 10 --retry-delay 3 \
-  --retry-connrefused --max-time 10 "$public_health" > /dev/null
+  --retry-connrefused --max-time 10 --header 'Cache-Control: no-cache' \
+  --get --data-urlencode "deployment=$revision-$$" "$public_health" > /dev/null
 printf '%s\n' "$revision" > "$deploy_dir/.deployed-revision"
+deployment_complete=1
 echo "Deployed $revision; API and public Pages health checks passed."
