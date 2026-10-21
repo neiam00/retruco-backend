@@ -98,6 +98,7 @@ func (s *Server) Handler() http.Handler {
 	r.Post("/api/logout", s.logout)
 	r.Get("/api/history", s.history)
 	r.Get("/api/matches", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, s.host.List()) })
+	r.Get("/api/matches/events", s.matchEvents)
 	r.Post("/api/matches", s.createMatch)
 	r.Get("/api/matches/{code}", s.matchSnapshot)
 	r.Post("/api/matches/{code}/join", s.joinMatch)
@@ -497,6 +498,7 @@ func (s *Server) socket(w http.ResponseWriter, r *http.Request) {
 		}
 		value, err := s.host.Snapshot(code, user.ID, perspective)
 		if err != nil {
+			_ = send(map[string]string{"type": "room_closed"})
 			return err
 		}
 		return send(map[string]any{
@@ -555,6 +557,11 @@ func (s *Server) socket(w http.ResponseWriter, r *http.Request) {
 				if snapshot() != nil {
 					return
 				}
+			} else if msg.Input.Command.Type == "leave" && msg.Input.Chat == "" && msg.Input.Signal == "" {
+				// Existing matches still acknowledge leaving with their final
+				// snapshot; a deleted waiting room sends room_closed instead.
+				_ = snapshot()
+				return
 			}
 		}
 	}

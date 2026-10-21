@@ -100,9 +100,15 @@ to that process; PostgreSQL supplies durability across restarts. Redis would not
 solve cross-instance ownership by itself and is unnecessary for this P0 topology.
 Do not scale replicas until match routing and distributed ownership are designed.
 
-Unstarted tables expire after 24 hours without activity when no viewers remain
-connected. Their codes stay reserved in PostgreSQL, and account history marks
-them as expired. Completed matches do not consume the active-table capacity.
+Unstarted tables are deleted when their last connected human leaves explicitly. When all
+seated humans disconnect, there is a 10-second grace period for a page refresh
+or brief connection loss. Another connected tab keeps the room alive;
+spectators and CPU seats do not. Newly created and restored waiting rooms also
+have 10 seconds for a player to connect. Deletion removes the stored waiting
+room and its memberships, so it cannot be joined or restored after a restart.
+`GET /api/matches/events` streams public room-list updates to open browsers.
+Started matches retain their normal reconnect and forfeit behavior.
+Completed matches do not consume the active-table capacity.
 Accepted envido reveals comparison values at settlement; concealed cards stay
 concealed. These behaviors follow the direct user clarifications.
 

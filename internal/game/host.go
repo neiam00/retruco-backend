@@ -19,6 +19,7 @@ import (
 type Repository interface {
 	CreateMatch(context.Context, string, []byte, []string) error
 	SaveMatch(context.Context, string, []byte, bool, []string) error
+	DeleteLobby(context.Context, string) error
 	ActiveMatches(context.Context) ([][]byte, error)
 }
 
@@ -95,24 +96,28 @@ type Snapshot struct {
 }
 
 type Host struct {
-	mu              sync.Mutex
-	matches         map[string]*Match
-	listeners       map[string]map[chan struct{}]bool
-	repository      Repository
-	log             *slog.Logger
-	connections     map[string]map[string]playerConnection
-	controllers     map[string]string
-	connectionOrder uint64
+	mu               sync.Mutex
+	matches          map[string]*Match
+	listeners        map[string]map[chan struct{}]bool
+	listingListeners map[chan struct{}]bool
+	lobbyDeadlines   map[string]time.Time
+	repository       Repository
+	log              *slog.Logger
+	connections      map[string]map[string]playerConnection
+	controllers      map[string]string
+	connectionOrder  uint64
 }
 
 func New(repository Repository, log *slog.Logger) *Host {
 	return &Host{
-		matches:     map[string]*Match{},
-		listeners:   map[string]map[chan struct{}]bool{},
-		repository:  repository,
-		log:         log,
-		connections: make(map[string]map[string]playerConnection),
-		controllers: make(map[string]string),
+		matches:          map[string]*Match{},
+		listeners:        map[string]map[chan struct{}]bool{},
+		listingListeners: make(map[chan struct{}]bool),
+		lobbyDeadlines:   make(map[string]time.Time),
+		repository:       repository,
+		log:              log,
+		connections:      make(map[string]map[string]playerConnection),
+		controllers:      make(map[string]string),
 	}
 }
 
@@ -130,7 +135,7 @@ func (h *Host) Restore(ctx context.Context) error {
 			match.Recent = map[string]uint64{}
 		}
 		if match.LastActivity.IsZero() {
-			// Older snapshots predate lobby expiry. Give them one full window.
+			// Older snapshots predate activity timestamps.
 			match.LastActivity = time.Now()
 		}
 		if match.CantoHistory == nil {
@@ -142,6 +147,7 @@ func (h *Host) Restore(ctx context.Context) error {
 			}
 		}
 		h.matches[match.Code] = &match
+		h.updateLobbyDeadline(&match)
 	}
 	return nil
 }
@@ -277,6 +283,8 @@ func (h *Host) Create(ctx context.Context, user store.User, config rules.Config,
 			return "", err
 		}
 		h.matches[generated] = match
+		h.updateLobbyDeadline(match)
+		h.notifyListings()
 		return generated, nil
 	}
 	return "", fmt.Errorf("no pudimos reservar un código de mesa. Inténtalo de nuevo")
@@ -331,13 +339,20 @@ func clone(m *Match) *Match {
 }
 
 func (h *Host) commit(ctx context.Context, next *Match) error {
+	previous := h.matches[next.Code]
 	next.LastActivity = time.Now()
 	if err := h.save(ctx, next); err != nil {
 		return err
 	}
 	h.matches[next.Code] = next
+	h.updateLobbyDeadline(next)
 	h.selectCPUController(next)
 	h.notify(next.Code)
+	if previous == nil || occupiedSeats(previous) != occupiedSeats(next) ||
+		(previous.State == nil) != (next.State == nil) ||
+		(next.State != nil && next.State.Phase == rules.MatchOver) {
+		h.notifyListings()
+	}
 	return nil
 }
 
@@ -539,6 +554,9 @@ func (h *Host) HandleFromConnection(ctx context.Context, code string, user store
 			} else {
 				next.Seats = append(next.Seats[:seat], next.Seats[seat+1:]...)
 			}
+			if !h.hasConnectedPlayer(next) {
+				return h.deleteLobby(ctx, next)
+			}
 		} else {
 			if input.Revision != m.State.Revision {
 				return fmt.Errorf("la mesa cambió. Revisa el estado actualizado")
@@ -621,14 +639,10 @@ func (h *Host) Run(ctx context.Context) {
 		case now := <-ticker.C:
 			h.mu.Lock()
 			for _, m := range h.matches {
-				if m.State == nil && len(h.listeners[m.Code]) == 0 && now.Sub(m.LastActivity) >= 24*time.Hour {
-					next := clone(m)
-					next.Expired = true
-					if err := h.commit(ctx, next); err != nil {
-						h.log.Error("expire inactive lobby", "error", err)
-						continue
+				if deadline, waiting := h.lobbyDeadlines[m.Code]; waiting && !now.Before(deadline) {
+					if err := h.deleteLobby(ctx, m); err != nil {
+						h.log.Error("delete vacant lobby", "code", m.Code, "error", err)
 					}
-					delete(h.matches, m.Code)
 					continue
 				}
 				if len(m.Options.CPUSeats) > 0 && h.controllers[m.Code] == "" {

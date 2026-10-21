@@ -47,3 +47,29 @@ func TestMatchCodeReservationCannotReplaceHistory(t *testing.T) {
 	err = repository.SaveMatch(t.Context(), code+"-missing", finished, true, []string{owner.ID})
 	require.ErrorIs(t, err, store.ErrMatchNotFound, "an update must not silently recreate a missing match")
 }
+
+func TestDeleteLobbyRemovesMembershipButKeepsStartedMatches(t *testing.T) {
+	databaseURL := os.Getenv("DATABASE_TEST_URL")
+	if databaseURL == "" {
+		t.Skip("DATABASE_TEST_URL must identify a disposable migrated PostgreSQL database")
+	}
+	pool, err := pgxpool.New(t.Context(), databaseURL)
+	require.NoError(t, err)
+	defer pool.Close()
+	repository := store.New(pool)
+	owner := store.User{ID: rand.Text(), Name: "Lobby owner"}
+	require.NoError(t, repository.CreateUser(t.Context(), owner, "", ""))
+	waiting, started := "waiting-"+rand.Text(), "started-"+rand.Text()
+	require.NoError(t, repository.CreateMatch(t.Context(), waiting, []byte(`{"State":null}`), []string{owner.ID}))
+	require.NoError(t, repository.CreateMatch(t.Context(), started, []byte(`{"State":{"Phase":"playing"}}`), []string{owner.ID}))
+	require.NoError(t, repository.DeleteLobby(t.Context(), waiting))
+	require.NoError(t, repository.DeleteLobby(t.Context(), waiting), "deletion retries are idempotent")
+	require.NoError(t, repository.DeleteLobby(t.Context(), started))
+	var exists bool
+	require.NoError(t, pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM matches WHERE code=$1)`, waiting).Scan(&exists))
+	assert.False(t, exists)
+	history, err := repository.History(t.Context(), owner.ID)
+	require.NoError(t, err)
+	require.Len(t, history, 1, "lobby memberships cascade away; started matches remain")
+	assert.Equal(t, started, history[0].Code)
+}

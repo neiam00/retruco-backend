@@ -95,6 +95,12 @@ func (p *Postgres) persistMatch(ctx context.Context, code string, payload []byte
 	return tx.Commit(ctx)
 }
 
+// DeleteLobby is idempotent and never removes a started match or its history.
+func (p *Postgres) DeleteLobby(ctx context.Context, code string) error {
+	_, err := p.pool.Exec(ctx, `DELETE FROM matches WHERE code=$1 AND COALESCE(payload->'State', 'null'::jsonb)='null'::jsonb`, code)
+	return err
+}
+
 func (p *Postgres) ActiveMatches(ctx context.Context) ([][]byte, error) {
 	rows, err := p.pool.Query(ctx, `SELECT payload FROM matches WHERE NOT finished ORDER BY updated_at LIMIT 1000`)
 	if err != nil {

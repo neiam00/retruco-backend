@@ -69,7 +69,7 @@ func startWhenFull(match *Match) error {
 func (h *Host) ConnectPlayer(code, userID, connectionID string) func() {
 	h.mu.Lock()
 	match := h.matches[code]
-	if match == nil || len(match.Options.CPUSeats) == 0 {
+	if match == nil {
 		h.mu.Unlock()
 		return func() {}
 	}
@@ -78,6 +78,7 @@ func (h *Host) ConnectPlayer(code, userID, connectionID string) func() {
 	}
 	h.connectionOrder++
 	h.connections[code][connectionID] = playerConnection{userID: userID, order: h.connectionOrder}
+	h.updateLobbyDeadline(match)
 	h.selectCPUController(match)
 	h.notify(code)
 	h.mu.Unlock()
@@ -89,6 +90,7 @@ func (h *Host) ConnectPlayer(code, userID, connectionID string) func() {
 			delete(h.connections, code)
 		}
 		if match := h.matches[code]; match != nil {
+			h.updateLobbyDeadline(match)
 			h.selectCPUController(match)
 			h.notify(code)
 		}

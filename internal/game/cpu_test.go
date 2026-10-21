@@ -182,6 +182,10 @@ func TestCPUSeatValidationAndLobbyLeaveDoNotMoveReservedSeats(t *testing.T) {
 	require.Error(t, err)
 	code, err := host.Create(t.Context(), ana, rules.Config{Players: 4, Target: 12}, false, game.RoomOptions{CPUSeats: []int{3}})
 	require.NoError(t, err)
+	// Another human keeps this waiting room alive when Ana leaves.
+	require.NoError(t, host.Join(t.Context(), code, store.User{ID: "beto", Name: "Beto"}))
+	disconnect := host.ConnectPlayer(code, "beto", "beto-tab")
+	defer disconnect()
 	require.NoError(t, host.Handle(t.Context(), code, ana, game.Input{ID: "leave", Command: rules.Command{Type: "leave"}}))
 	view, err := host.Snapshot(code, ana.ID, 0)
 	require.NoError(t, err)
