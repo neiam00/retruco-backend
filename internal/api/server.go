@@ -403,8 +403,15 @@ func (s *Server) joinMatch(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	var input struct {
+		Seat *int `json:"seat"`
+	}
+	if err := decode(r, &input); err != nil && !errors.Is(err, io.EOF) {
+		fail(w, http.StatusBadRequest, "Revisa el puesto elegido.")
+		return
+	}
 	code := strings.ToUpper(chi.URLParam(r, "code"))
-	if err := s.host.Join(r.Context(), code, user); err != nil {
+	if err := s.host.Join(r.Context(), code, user, input.Seat); err != nil {
 		fail(w, 409, err.Error())
 		return
 	}

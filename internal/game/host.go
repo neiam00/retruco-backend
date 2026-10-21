@@ -258,15 +258,14 @@ func (h *Host) Create(ctx context.Context, user store.User, config rules.Config,
 			Code:         generated,
 			Private:      private,
 			Config:       config,
-			Seats:        []Seat{{ID: user.ID, Name: user.Name}},
+			Seats:        make([]Seat, config.Players),
 			Recent:       map[string]uint64{},
 			Chat:         []Chat{},
 			Sequence:     1,
 			LastActivity: time.Now(),
 		}
+		match.Seats[0] = Seat{ID: user.ID, Name: user.Name}
 		if len(options.CPUSeats) > 0 {
-			match.Seats = make([]Seat, config.Players)
-			match.Seats[0] = Seat{ID: user.ID, Name: user.Name}
 			for _, seat := range options.CPUSeats {
 				match.Seats[seat] = Seat{
 					ID:   fmt.Sprintf("cpu:%s:%d", generated, seat),
@@ -290,7 +289,9 @@ func (h *Host) Create(ctx context.Context, user store.User, config rules.Config,
 	return "", fmt.Errorf("no pudimos reservar un código de mesa. Inténtalo de nuevo")
 }
 
-func (h *Host) Join(ctx context.Context, code string, user store.User) error {
+// Join claims the requested seat atomically. A nil seat supports older clients
+// by choosing the first vacancy; existing players retain their current seat.
+func (h *Host) Join(ctx context.Context, code string, user store.User, requested *int) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	m := h.matches[code]
@@ -306,16 +307,28 @@ func (h *Host) Join(ctx context.Context, code string, user store.User) error {
 		return fmt.Errorf("la mesa está llena; puedes entrar a mirar")
 	}
 	next := clone(m)
-	if len(next.Options.CPUSeats) > 0 {
-		for seat := range next.Seats {
-			if next.Seats[seat].ID == "" {
-				next.Seats[seat] = Seat{ID: user.ID, Name: user.Name}
+	// Older persisted lobbies stored only occupied seats.
+	for len(next.Seats) < next.Config.Players {
+		next.Seats = append(next.Seats, Seat{})
+	}
+	chosen := -1
+	if requested != nil {
+		chosen = *requested
+		if chosen < 0 || chosen >= next.Config.Players {
+			return fmt.Errorf("ese puesto no existe")
+		}
+		if next.Seats[chosen].ID != "" {
+			return fmt.Errorf("ese puesto ya está ocupado; elige otro")
+		}
+	} else {
+		for seat, player := range next.Seats {
+			if player.ID == "" {
+				chosen = seat
 				break
 			}
 		}
-	} else {
-		next.Seats = append(next.Seats, Seat{ID: user.ID, Name: user.Name})
 	}
+	next.Seats[chosen] = Seat{ID: user.ID, Name: user.Name}
 	if err := startWhenFull(next); err != nil {
 		return err
 	}
@@ -549,11 +562,7 @@ func (h *Host) HandleFromConnection(ctx context.Context, code string, user store
 			if input.Command.Type != "leave" {
 				return fmt.Errorf("esperando a los demás jugadores")
 			}
-			if len(next.Options.CPUSeats) > 0 {
-				next.Seats[seat] = Seat{}
-			} else {
-				next.Seats = append(next.Seats[:seat], next.Seats[seat+1:]...)
-			}
+			next.Seats[seat] = Seat{}
 			if !h.hasConnectedPlayer(next) {
 				return h.deleteLobby(ctx, next)
 			}

@@ -109,6 +109,16 @@ room and its memberships, so it cannot be joined or restored after a restart.
 `GET /api/matches/events` streams public room-list updates to open browsers.
 Started matches retain their normal reconnect and forfeit behavior.
 Completed matches do not consume the active-table capacity.
+
+Joining players choose a vacant seat in the waiting room. `POST /api/matches/{code}/join`
+accepts `{ "seat": 2 }` with a zero-based index; seats 0 and 2 share a team, as do
+seats 1 and 3. The server reserves the seat atomically and rejects occupied or
+out-of-range choices. Older clients that omit `seat` receive the first vacancy.
+Leaving a waiting room frees that seat without moving anyone else.
+Registered users' `/api/history` includes their `team` and a `players` roster
+with each player's name, seat, team, and CPU flag, alongside the scores and winner.
+The team is -1 when an older snapshot cannot identify the user's seat.
+
 Accepted envido reveals comparison values at settlement; concealed cards stay
 concealed. These behaviors follow the direct user clarifications.
 

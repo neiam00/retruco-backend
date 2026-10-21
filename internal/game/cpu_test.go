@@ -42,7 +42,7 @@ func TestCPUSeatSelectionKeepsHumanSlotsAndPersists(t *testing.T) {
 				if !expectedCPU {
 					assert.Empty(t, view.Seats[seat].ID)
 					user := store.User{ID: fmt.Sprintf("human-%d", seat), Name: "Humano"}
-					require.NoError(t, host.Join(t.Context(), code, user))
+					require.NoError(t, host.Join(t.Context(), code, user, nil))
 					joined, snapshotErr := host.Snapshot(code, user.ID, 0)
 					require.NoError(t, snapshotErr)
 					assert.Equal(t, seat, joined.Seat)
@@ -66,7 +66,7 @@ func TestCPUControllerTransfersAndRejectsStaleOrHumanSeatCommands(t *testing.T) 
 	ana, beto := store.User{ID: "ana", Name: "Ana"}, store.User{ID: "beto", Name: "Beto"}
 	code, err := host.Create(t.Context(), ana, rules.Config{Players: 4, Target: 12}, false, game.RoomOptions{CPUSeats: []int{1, 3}})
 	require.NoError(t, err)
-	require.NoError(t, host.Join(t.Context(), code, beto))
+	require.NoError(t, host.Join(t.Context(), code, beto, nil))
 	disconnectAna := host.ConnectPlayer(code, ana.ID, "ana-tab")
 	defer disconnectAna()
 	disconnectSecondTab := host.ConnectPlayer(code, ana.ID, "ana-other-tab")
@@ -183,7 +183,7 @@ func TestCPUSeatValidationAndLobbyLeaveDoNotMoveReservedSeats(t *testing.T) {
 	code, err := host.Create(t.Context(), ana, rules.Config{Players: 4, Target: 12}, false, game.RoomOptions{CPUSeats: []int{3}})
 	require.NoError(t, err)
 	// Another human keeps this waiting room alive when Ana leaves.
-	require.NoError(t, host.Join(t.Context(), code, store.User{ID: "beto", Name: "Beto"}))
+	require.NoError(t, host.Join(t.Context(), code, store.User{ID: "beto", Name: "Beto"}, nil))
 	disconnect := host.ConnectPlayer(code, "beto", "beto-tab")
 	defer disconnect()
 	require.NoError(t, host.Handle(t.Context(), code, ana, game.Input{ID: "leave", Command: rules.Command{Type: "leave"}}))
@@ -191,7 +191,7 @@ func TestCPUSeatValidationAndLobbyLeaveDoNotMoveReservedSeats(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, view.Seats[0].ID)
 	assert.True(t, view.Seats[3].CPU)
-	require.NoError(t, host.Join(t.Context(), code, ana))
+	require.NoError(t, host.Join(t.Context(), code, ana, nil))
 	again, err := host.Snapshot(code, ana.ID, 0)
 	require.NoError(t, err)
 	assert.Equal(t, 0, again.Seat)

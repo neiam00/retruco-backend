@@ -108,9 +108,57 @@ func newHost(t *testing.T, private bool) (*game.Host, *memoryRepository, string,
 	code, err := host.Create(t.Context(), players[0], rules.Config{Players: 4, Target: 12}, private, game.RoomOptions{})
 	require.NoError(t, err)
 	for _, player := range players[1:] {
-		require.NoError(t, host.Join(t.Context(), code, player))
+		require.NoError(t, host.Join(t.Context(), code, player, nil))
 	}
 	return host, repository, code, players
+}
+
+func TestChooseSeatPreservesTeamsAndRejectsOccupiedSeats(t *testing.T) {
+	repository := &memoryRepository{payloads: make(map[string][]byte)}
+	host := game.New(repository, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	owner := store.User{ID: "owner", Name: "Owner"}
+	partner := store.User{ID: "partner", Name: "Partner"}
+	opponent := store.User{ID: "opponent", Name: "Opponent"}
+	code, err := host.Create(t.Context(), owner, rules.Config{Players: 4, Target: 12}, false, game.RoomOptions{CPUSeats: []int{3}})
+	require.NoError(t, err)
+	disconnect := host.ConnectPlayer(code, owner.ID, "owner-tab")
+	defer disconnect()
+	for _, seat := range []int{-1, 4, 0, 3} {
+		require.Error(t, host.Join(t.Context(), code, partner, &seat))
+	}
+	seat := 2
+	require.NoError(t, host.Join(t.Context(), code, partner, &seat))
+	require.Error(t, host.Join(t.Context(), code, opponent, &seat))
+	view, err := host.Snapshot(code, partner.ID, 0)
+	require.NoError(t, err)
+	assert.Equal(t, 2, view.Seat)
+	assert.Nil(t, view.State, "an unoccupied slot must keep the lobby waiting")
+
+	restored := game.New(repository, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	require.NoError(t, restored.Restore(t.Context()))
+	view, err = restored.Snapshot(code, partner.ID, 0)
+	require.NoError(t, err)
+	assert.Equal(t, 2, view.Seat, "chosen team survives restart")
+
+	require.NoError(t, host.Handle(t.Context(), code, partner, game.Input{ID: "leave-partner", Command: rules.Command{Type: "leave"}}))
+	view, err = host.Snapshot(code, owner.ID, 0)
+	require.NoError(t, err)
+	assert.Empty(t, view.Seats[2].ID)
+	assert.True(t, view.Seats[3].CPU)
+	require.NoError(t, host.Join(t.Context(), code, partner, &seat))
+	seat = 1
+	require.NoError(t, host.Join(t.Context(), code, opponent, &seat))
+	view, err = host.Snapshot(code, opponent.ID, 0)
+	require.NoError(t, err)
+	require.NotNil(t, view.State)
+	assert.Equal(t, 1, view.Seat)
+	assert.Equal(t, partner.ID, view.Seats[2].ID)
+	// Repeated join requests must not move a player to another team.
+	seat = 0
+	require.NoError(t, host.Join(t.Context(), code, partner, &seat))
+	view, err = host.Snapshot(code, partner.ID, 0)
+	require.NoError(t, err)
+	assert.Equal(t, 2, view.Seat)
 }
 
 func cut(t *testing.T, host *game.Host, code string, players []store.User) game.Snapshot {

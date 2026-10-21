@@ -37,6 +37,8 @@ func TestMatchCodeReservationCannotReplaceHistory(t *testing.T) {
 	require.Len(t, ownerHistory, 1)
 	assert.Equal(t, [2]int{12, 6}, ownerHistory[0].Scores)
 	assert.True(t, ownerHistory[0].Finished)
+	assert.Equal(t, -1, ownerHistory[0].Team, "legacy snapshots must not invent the user's team")
+	assert.Empty(t, ownerHistory[0].Players)
 	challengerHistory, err := repository.History(t.Context(), challenger.ID)
 	require.NoError(t, err)
 	assert.Empty(t, challengerHistory, "a failed reservation must not add the challenger to the old match")
@@ -46,6 +48,52 @@ func TestMatchCodeReservationCannotReplaceHistory(t *testing.T) {
 	assert.JSONEq(t, string(finished), string(stored))
 	err = repository.SaveMatch(t.Context(), code+"-missing", finished, true, []string{owner.ID})
 	require.ErrorIs(t, err, store.ErrMatchNotFound, "an update must not silently recreate a missing match")
+}
+
+func TestHistoryIncludesTeamsAndHumanAndCPUPlayers(t *testing.T) {
+	databaseURL := os.Getenv("DATABASE_TEST_URL")
+	if databaseURL == "" {
+		t.Skip("DATABASE_TEST_URL must identify a disposable migrated PostgreSQL database")
+	}
+	pool, err := pgxpool.New(t.Context(), databaseURL)
+	require.NoError(t, err)
+	defer pool.Close()
+	repository := store.New(pool)
+	ana := store.User{ID: rand.Text(), Name: "Ana"}
+	beto := store.User{ID: rand.Text(), Name: "Beto"}
+	for _, user := range []store.User{ana, beto} {
+		require.NoError(t, repository.CreateUser(t.Context(), user, "", ""))
+	}
+	// Use the persisted JSON contract, including lower-case seat field names.
+	payload, err := json.Marshal(map[string]any{
+		"State": map[string]any{"Scores": [2]int{6, 12}, "Winner": 1},
+		"Seats": []map[string]any{
+			{"id": ana.ID, "name": "Ana"},
+			{"id": "cpu:1", "name": "CPU 1", "cpu": true},
+			{"id": "cpu:2", "name": "CPU 2", "cpu": true},
+			{"id": beto.ID, "name": "Beto"},
+		},
+	})
+	require.NoError(t, err)
+	code := "history-" + rand.Text()
+	members := []string{ana.ID, beto.ID}
+	require.NoError(t, repository.CreateMatch(t.Context(), code, payload, members))
+	require.NoError(t, repository.SaveMatch(t.Context(), code, payload, true, members))
+	for team, user := range []store.User{ana, beto} {
+		history, err := repository.History(t.Context(), user.ID)
+		require.NoError(t, err)
+		require.Len(t, history, 1)
+		entry := history[0]
+		assert.Equal(t, team, entry.Team)
+		assert.Equal(t, 1, entry.Winner)
+		assert.Equal(t, [2]int{6, 12}, entry.Scores)
+		assert.Equal(t, []store.HistoryPlayer{
+			{Name: "Ana", Seat: 0, Team: 0},
+			{Name: "CPU 1", Seat: 1, Team: 1, CPU: true},
+			{Name: "CPU 2", Seat: 2, Team: 0, CPU: true},
+			{Name: "Beto", Seat: 3, Team: 1},
+		}, entry.Players)
+	}
 }
 
 func TestDeleteLobbyRemovesMembershipButKeepsStartedMatches(t *testing.T) {

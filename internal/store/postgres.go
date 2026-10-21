@@ -119,12 +119,21 @@ func (p *Postgres) ActiveMatches(ctx context.Context) ([][]byte, error) {
 }
 
 type HistoryEntry struct {
-	Code      string    `json:"code"`
-	Scores    [2]int    `json:"scores"`
-	Winner    int       `json:"winner"`
-	Finished  bool      `json:"finished"`
-	Expired   bool      `json:"expired"`
-	UpdatedAt time.Time `json:"updatedAt"`
+	Code      string          `json:"code"`
+	Scores    [2]int          `json:"scores"`
+	Winner    int             `json:"winner"`
+	Finished  bool            `json:"finished"`
+	Expired   bool            `json:"expired"`
+	UpdatedAt time.Time       `json:"updatedAt"`
+	Team      int             `json:"team"`
+	Players   []HistoryPlayer `json:"players"`
+}
+
+type HistoryPlayer struct {
+	Name string `json:"name"`
+	Seat int    `json:"seat"`
+	Team int    `json:"team"`
+	CPU  bool   `json:"cpu"`
 }
 
 func (p *Postgres) History(ctx context.Context, userID string) ([]HistoryEntry, error) {
@@ -142,7 +151,12 @@ func (p *Postgres) History(ctx context.Context, userID string) ([]HistoryEntry, 
 		}
 		var match struct {
 			Expired bool
-			State   *struct {
+			Seats   []struct {
+				ID   string
+				Name string
+				CPU  bool
+			}
+			State *struct {
 				Scores [2]int
 				Winner int
 			}
@@ -151,6 +165,19 @@ func (p *Postgres) History(ctx context.Context, userID string) ([]HistoryEntry, 
 			return nil, fmt.Errorf("decode match history: %w", err)
 		}
 		entry.Winner = -1
+		entry.Team = -1
+		entry.Players = []HistoryPlayer{}
+		for seat, player := range match.Seats {
+			if player.ID == "" {
+				continue
+			}
+			entry.Players = append(entry.Players, HistoryPlayer{
+				Name: player.Name, Seat: seat, Team: seat % 2, CPU: player.CPU,
+			})
+			if player.ID == userID {
+				entry.Team = seat % 2
+			}
+		}
 		entry.Expired = match.Expired
 		if match.State != nil {
 			entry.Scores, entry.Winner = match.State.Scores, match.State.Winner
