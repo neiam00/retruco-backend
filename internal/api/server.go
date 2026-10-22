@@ -46,18 +46,20 @@ type Config struct {
 	SecureCookies bool
 	ProxySecret   string
 	Voice         VoiceConfig
+	Turnstile     TurnstileConfig
 }
 
 type Server struct {
-	config    Config
-	store     Repository
-	host      *game.Host
-	log       *slog.Logger
-	ctx       context.Context
-	dummyHash []byte
-	limitsMu  sync.Mutex
-	limits    map[string]window
-	voice     *voiceHub
+	config          Config
+	store           Repository
+	host            *game.Host
+	log             *slog.Logger
+	ctx             context.Context
+	dummyHash       []byte
+	limitsMu        sync.Mutex
+	limits          map[string]window
+	voice           *voiceHub
+	turnstileClient *http.Client
 }
 
 type window struct {
@@ -73,15 +75,25 @@ func New(ctx context.Context, config Config, repository Repository, host *game.H
 	if err != nil {
 		return nil, err
 	}
+	turnstileClient := config.Turnstile.Client
+	if turnstileClient == nil {
+		turnstileClient = &http.Client{
+			Timeout: 5 * time.Second,
+			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		}
+	}
 	return &Server{
-		config:    config,
-		store:     repository,
-		host:      host,
-		log:       log,
-		ctx:       ctx,
-		dummyHash: hash,
-		limits:    map[string]window{},
-		voice:     newVoiceHub(),
+		config:          config,
+		store:           repository,
+		host:            host,
+		log:             log,
+		ctx:             ctx,
+		dummyHash:       hash,
+		limits:          map[string]window{},
+		voice:           newVoiceHub(),
+		turnstileClient: turnstileClient,
 	}, nil
 }
 
@@ -94,6 +106,7 @@ func (s *Server) Handler() http.Handler {
 	r.Get("/api/session", s.session)
 	r.Post("/api/guest", s.guest)
 	r.Post("/api/register", s.register)
+	r.Get("/api/registration", s.registrationConfig)
 	r.Post("/api/login", s.login)
 	r.Post("/api/logout", s.logout)
 	r.Get("/api/history", s.history)
@@ -297,7 +310,10 @@ type credentials struct {
 }
 
 func (s *Server) register(w http.ResponseWriter, r *http.Request) {
-	var input credentials
+	var input struct {
+		credentials
+		TurnstileToken string `json:"turnstileToken"`
+	}
 	if decode(r, &input) != nil {
 		fail(w, 400, "Datos inválidos.")
 		return
@@ -305,6 +321,19 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 	input.Username = strings.ToLower(strings.TrimSpace(input.Username))
 	if !usernamePattern.MatchString(input.Username) || len(input.Password) < 10 || len(input.Password) > 72 {
 		fail(w, 400, "Usa 3–24 letras, números o guiones bajos y una contraseña de 10–72 bytes.")
+		return
+	}
+	if s.config.Turnstile.SiteKey == "" || s.config.Turnstile.SecretKey == "" {
+		fail(w, http.StatusServiceUnavailable, "El registro no está disponible en este momento.")
+		return
+	}
+	if err := s.verifyRegistration(r.Context(), input.TurnstileToken); err != nil {
+		if errors.Is(err, errTurnstileRejected) {
+			fail(w, http.StatusForbidden, "Completa de nuevo la verificación de seguridad.")
+		} else {
+			s.log.Error("registration verification unavailable", "error", err)
+			fail(w, http.StatusServiceUnavailable, "No pudimos verificarte. Inténtalo de nuevo.")
+		}
 		return
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(input.Password), 12)

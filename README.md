@@ -205,3 +205,30 @@ generated files applies the policy to a bucket that still has older metadata.
 Keep the upstream attribution accessible alongside the deployed app. Configure
 the frontend's public `CARD_ASSET_ORIGIN` with the bucket/CDN origin and rebuild.
 Leave it empty to serve the bundled assets. Never place B2 keys in the frontend.
+
+
+## Turnstile registration verification
+
+Set `TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY` in `.env` for `make dev`, or
+in the production environment file used by Docker Compose. Both are passed to
+the API container; no frontend rebuild is required to rotate them. Configure a
+Managed widget allowing the frontend hostname and keep `ALLOWED_ORIGINS` aligned
+with those public frontend origins. The secret is never exposed to clients.
+
+The API exposes only the public site key at `GET /api/registration`. Registration
+requires `turnstileToken`; Siteverify must return success, action `register`, and
+an allowed hostname before password hashing, account creation, or a session.
+Requests fail closed when keys are missing, tokens are rejected, or verification
+is unavailable. Login and guest creation do not use Turnstile.
+
+For disposable local/browser tests, Cloudflare provides site key
+`1x00000000000000000000AA`, secret `1x0000000000000000000000000000000AA`, and token
+`XXXX.DUMMY.TOKEN.XXXX`. These test responses use action `test` and hostname
+`localhost`. The exact public pair is supported only with `APP_ENV=development`;
+add a localhost origin alongside the actual test origin. Real keys and production
+always require action `register`. Never configure dummy keys in production.
+
+Go handler tests use an injected HTTP transport to exercise rejection, expiry,
+wrong hostname/action, network failure, and successful account creation without
+contacting Cloudflare. `DATABASE_TEST_URL` enables the disposable PostgreSQL
+account/session persistence integration test.

@@ -62,6 +62,11 @@ func run(log *slog.Logger) error {
 		Origins:       origins,
 		SecureCookies: env("COOKIE_SECURE", "true") == "true",
 		ProxySecret:   os.Getenv("API_PROXY_SECRET"),
+		Turnstile: api.TurnstileConfig{
+			SiteKey:     os.Getenv("TURNSTILE_SITE_KEY"),
+			SecretKey:   os.Getenv("TURNSTILE_SECRET_KEY"),
+			Development: os.Getenv("APP_ENV") == "development",
+		},
 		Voice: api.VoiceConfig{
 			STUNURLs:   envList("VOICE_STUN_URLS"),
 			TURNURLs:   envList("VOICE_TURN_URLS"),

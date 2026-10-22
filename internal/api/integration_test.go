@@ -45,7 +45,17 @@ func TestAccountAndMatchPersistence(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	host := game.New(repository, log)
 	const origin = "http://local.retruco.test"
-	server, err := api.New(ctx, api.Config{Origins: []string{origin}}, repository, host, log)
+	server, err := api.New(ctx, api.Config{
+		Origins: []string{origin},
+		Turnstile: api.TurnstileConfig{
+			SiteKey: "integration-site-key", SecretKey: "integration-secret",
+			Client: &http.Client{Transport: turnstileTransport(func(request *http.Request) (*http.Response, error) {
+				require.NoError(t, request.ParseForm())
+				require.Equal(t, "integration-token", request.Form.Get("response"))
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"success":true,"hostname":"local.retruco.test","action":"register"}`))}, nil
+			})},
+		},
+	}, repository, host, log)
 	require.NoError(t, err)
 	httpServer := httptest.NewServer(server.Handler())
 	defer httpServer.Close()
@@ -77,7 +87,8 @@ func TestAccountAndMatchPersistence(t *testing.T) {
 	username := "test_" + strings.ToLower(rand.Text()[:12])
 	credentials := map[string]string{"username": username, "password": "local-test-password-123"}
 	var account store.User
-	require.Equal(t, http.StatusOK, request(first, http.MethodPost, "/api/register", credentials, &account))
+	registration := map[string]string{"username": username, "password": credentials["password"], "turnstileToken": "integration-token"}
+	require.Equal(t, http.StatusOK, request(first, http.MethodPost, "/api/register", registration, &account))
 	assert.True(t, account.Registered)
 	var storedHash string
 	require.NoError(t, pool.QueryRow(ctx, `SELECT password_hash FROM users WHERE id=$1`, account.ID).Scan(&storedHash))
