@@ -2,8 +2,12 @@ package game_test
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"log/slog"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -81,7 +85,7 @@ func TestWaitingRoomDisconnectGraceCountsPlayersAndAllTheirTabs(t *testing.T) {
 	})
 }
 
-func TestLeavingKeepsOtherPlayersWaitingAndStartedMatchesSurviveDisconnects(t *testing.T) {
+func TestLeavingKeepsConnectedPlayersButClosesUnattendedStartedMatches(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		repository := &memoryRepository{payloads: make(map[string][]byte)}
 		host := game.New(repository, slog.New(slog.NewTextHandler(io.Discard, nil)))
@@ -110,10 +114,67 @@ func TestLeavingKeepsOtherPlayersWaitingAndStartedMatchesSurviveDisconnects(t *t
 		synctest.Wait()
 		_, err = host.Snapshot(code, other.ID, 0)
 		assert.NoError(t, err)
-		view, err = host.Snapshot(startedCode, owner.ID, 0)
-		require.NoError(t, err)
-		assert.NotNil(t, view.State)
+		_, err = host.Snapshot(startedCode, owner.ID, 0)
+		require.Error(t, err)
 	})
+}
+
+func TestStartedRoomReconnectGraceAndDurableClosure(t *testing.T) {
+	for _, cpu := range []bool{false, true} {
+		t.Run(fmt.Sprintf("cpu=%t", cpu), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				repository := &memoryRepository{payloads: make(map[string][]byte)}
+				log := slog.New(slog.NewTextHandler(io.Discard, nil))
+				host := game.New(repository, log)
+				owner := store.User{ID: "owner", Name: "Owner"}
+				options := game.RoomOptions{}
+				if cpu {
+					options.CPUSeats = []int{1}
+				}
+				code, err := host.Create(t.Context(), owner, rules.Config{Players: 2, Target: 12}, false, options)
+				require.NoError(t, err)
+				if !cpu {
+					require.NoError(t, host.Join(t.Context(), code, store.User{ID: "other", Name: "Other"}, nil))
+				}
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				go host.Run(ctx)
+				first := host.ConnectPlayer(code, owner.ID, "first")
+				second := host.ConnectPlayer(code, owner.ID, "second")
+				first()
+				time.Sleep(11 * time.Second)
+				synctest.Wait()
+				_, err = host.Snapshot(code, owner.ID, 0)
+				require.NoError(t, err, "another human tab keeps the started room alive")
+				second()
+				time.Sleep(9 * time.Second)
+				synctest.Wait()
+				reconnected := host.ConnectPlayer(code, owner.ID, "returned")
+				time.Sleep(2 * time.Second)
+				synctest.Wait()
+				_, err = host.Snapshot(code, owner.ID, 0)
+				require.NoError(t, err, "reconnecting cancels deletion")
+				reconnected()
+				time.Sleep(9 * time.Second)
+				watcher := host.ConnectPlayer(code, "spectator", "watcher")
+				defer watcher()
+				require.NoError(t, host.Handle(t.Context(), code, store.User{ID: "spectator", Name: "Watcher"}, game.Input{ID: "chat", Chat: "Hello"}))
+				time.Sleep(2 * time.Second)
+				synctest.Wait()
+				assert.Empty(t, host.List(), "spectator connections and chat must not extend the grace period")
+				_, err = host.Snapshot(code, owner.ID, 0)
+				require.Error(t, err)
+				require.Error(t, host.Join(t.Context(), code, owner, nil))
+				var archived game.Match
+				require.NoError(t, json.Unmarshal(repository.payloads[code], &archived))
+				assert.True(t, archived.Expired, "retain history without retaining a joinable room")
+				assert.Equal(t, -1, archived.State.Winner, "abandonment does not invent a winner")
+				restarted := game.New(repository, log)
+				require.NoError(t, restarted.Restore(t.Context()))
+				assert.Empty(t, restarted.List())
+			})
+		})
+	}
 }
 
 func TestFailedLobbyDeletionCanBeRetried(t *testing.T) {
@@ -131,6 +192,53 @@ func TestFailedLobbyDeletionCanBeRetried(t *testing.T) {
 	require.NoError(t, host.Handle(t.Context(), code, owner, leave))
 	_, err = host.Snapshot(code, owner.ID, 0)
 	assert.Error(t, err)
+}
+
+type recoveringRepository struct {
+	*memoryRepository
+	unavailable atomic.Bool
+}
+
+func (repository *recoveringRepository) SaveMatch(ctx context.Context, code string, payload []byte, finished bool, members []string) error {
+	if repository.unavailable.Load() {
+		return errors.New("storage unavailable")
+	}
+	return repository.memoryRepository.SaveMatch(ctx, code, payload, finished, members)
+}
+
+func TestRestoredStartedRoomClosureRetriesStorageFailure(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		repository := &recoveringRepository{memoryRepository: &memoryRepository{payloads: make(map[string][]byte)}}
+		log := slog.New(slog.NewTextHandler(io.Discard, nil))
+		original := game.New(repository, log)
+		owner := store.User{ID: "owner", Name: "Owner"}
+		code, err := original.Create(t.Context(), owner, rules.Config{Players: 2, Target: 12}, false, game.RoomOptions{CPUSeats: []int{1}})
+		require.NoError(t, err)
+		host := game.New(repository, log)
+		require.NoError(t, host.Restore(t.Context()))
+		listings, unsubscribe := host.SubscribeListings()
+		defer unsubscribe()
+		room, unwatch := host.Subscribe(code)
+		defer unwatch()
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		repository.unavailable.Store(true)
+		go host.Run(ctx)
+		time.Sleep(11 * time.Second)
+		synctest.Wait()
+		_, err = host.Snapshot(code, owner.ID, 0)
+		require.NoError(t, err, "failed persistence must leave the room available for retry")
+		repository.unavailable.Store(false)
+		time.Sleep(500 * time.Millisecond)
+		synctest.Wait()
+		_, err = host.Snapshot(code, owner.ID, 0)
+		require.Error(t, err, "a later tick retries the closure")
+		assert.Len(t, listings, 1, "room browsers are notified")
+		assert.Len(t, room, 1, "spectators are notified that the room closed")
+		restored := game.New(repository, log)
+		require.NoError(t, restored.Restore(t.Context()))
+		assert.Empty(t, restored.List())
+	})
 }
 
 func TestCPUSeatsDoNotKeepAnEmptyWaitingRoomAlive(t *testing.T) {

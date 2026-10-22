@@ -78,7 +78,7 @@ func (h *Host) ConnectPlayer(code, userID, connectionID string) func() {
 	}
 	h.connectionOrder++
 	h.connections[code][connectionID] = playerConnection{userID: userID, order: h.connectionOrder}
-	h.updateLobbyDeadline(match)
+	h.updateRoomDeadline(match)
 	h.selectCPUController(match)
 	h.notify(code)
 	h.mu.Unlock()
@@ -90,7 +90,7 @@ func (h *Host) ConnectPlayer(code, userID, connectionID string) func() {
 			delete(h.connections, code)
 		}
 		if match := h.matches[code]; match != nil {
-			h.updateLobbyDeadline(match)
+			h.updateRoomDeadline(match)
 			h.selectCPUController(match)
 			h.notify(code)
 		}

@@ -100,7 +100,7 @@ type Host struct {
 	matches          map[string]*Match
 	listeners        map[string]map[chan struct{}]bool
 	listingListeners map[chan struct{}]bool
-	lobbyDeadlines   map[string]time.Time
+	roomDeadlines    map[string]time.Time
 	repository       Repository
 	log              *slog.Logger
 	connections      map[string]map[string]playerConnection
@@ -113,7 +113,7 @@ func New(repository Repository, log *slog.Logger) *Host {
 		matches:          map[string]*Match{},
 		listeners:        map[string]map[chan struct{}]bool{},
 		listingListeners: make(map[chan struct{}]bool),
-		lobbyDeadlines:   make(map[string]time.Time),
+		roomDeadlines:    make(map[string]time.Time),
 		repository:       repository,
 		log:              log,
 		connections:      make(map[string]map[string]playerConnection),
@@ -147,7 +147,7 @@ func (h *Host) Restore(ctx context.Context) error {
 			}
 		}
 		h.matches[match.Code] = &match
-		h.updateLobbyDeadline(&match)
+		h.updateRoomDeadline(&match)
 	}
 	return nil
 }
@@ -282,7 +282,7 @@ func (h *Host) Create(ctx context.Context, user store.User, config rules.Config,
 			return "", err
 		}
 		h.matches[generated] = match
-		h.updateLobbyDeadline(match)
+		h.updateRoomDeadline(match)
 		h.notifyListings()
 		return generated, nil
 	}
@@ -358,7 +358,7 @@ func (h *Host) commit(ctx context.Context, next *Match) error {
 		return err
 	}
 	h.matches[next.Code] = next
-	h.updateLobbyDeadline(next)
+	h.updateRoomDeadline(next)
 	h.selectCPUController(next)
 	h.notify(next.Code)
 	if previous == nil || occupiedSeats(previous) != occupiedSeats(next) ||
@@ -564,7 +564,7 @@ func (h *Host) HandleFromConnection(ctx context.Context, code string, user store
 			}
 			next.Seats[seat] = Seat{}
 			if !h.hasConnectedPlayer(next) {
-				return h.deleteLobby(ctx, next)
+				return h.closeVacantRoom(ctx, next)
 			}
 		} else {
 			if input.Revision != m.State.Revision {
@@ -657,9 +657,9 @@ func (h *Host) Run(ctx context.Context) {
 		case now := <-ticker.C:
 			h.mu.Lock()
 			for _, m := range h.matches {
-				if deadline, waiting := h.lobbyDeadlines[m.Code]; waiting && !now.Before(deadline) {
-					if err := h.deleteLobby(ctx, m); err != nil {
-						h.log.Error("delete vacant lobby", "code", m.Code, "error", err)
+				if deadline, waiting := h.roomDeadlines[m.Code]; waiting && !now.Before(deadline) {
+					if err := h.closeVacantRoom(ctx, m); err != nil {
+						h.log.Error("close vacant room", "code", m.Code, "error", err)
 					}
 					continue
 				}

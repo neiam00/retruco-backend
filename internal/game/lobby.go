@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/neiam00/retruco-backend/rules"
 )
 
-const lobbyReconnectGrace = 10 * time.Second
+const roomReconnectGrace = 10 * time.Second
 
 func (h *Host) hasConnectedPlayer(match *Match) bool {
 	for _, connection := range h.connections[match.Code] {
@@ -18,33 +20,41 @@ func (h *Host) hasConnectedPlayer(match *Match) bool {
 	return false
 }
 
-// Caller holds h.mu. Only seated humans keep a waiting room alive. A second
+// Caller holds h.mu. Only seated humans keep a room alive. A second
 // browser tab counts as a live connection; spectators and CPU seats do not.
-func (h *Host) updateLobbyDeadline(match *Match) {
-	if match.State != nil || h.hasConnectedPlayer(match) {
-		delete(h.lobbyDeadlines, match.Code)
+func (h *Host) updateRoomDeadline(match *Match) {
+	if h.hasConnectedPlayer(match) {
+		delete(h.roomDeadlines, match.Code)
 		return
 	}
-	if _, waiting := h.lobbyDeadlines[match.Code]; !waiting {
-		h.lobbyDeadlines[match.Code] = time.Now().Add(lobbyReconnectGrace)
+	if _, waiting := h.roomDeadlines[match.Code]; !waiting {
+		h.roomDeadlines[match.Code] = time.Now().Add(roomReconnectGrace)
 	}
 }
 
-// Caller holds h.mu. Persist deletion before removing access in memory so a
-// successful removal cannot reappear when the server restarts.
-func (h *Host) deleteLobby(ctx context.Context, match *Match) error {
-	if match.State != nil {
-		return fmt.Errorf("a started match cannot be deleted as a vacant lobby")
-	}
+// Caller holds h.mu. Persist closure before removing access in memory so a
+// successful removal cannot reappear when the server restarts. Started games
+// remain in account history as abandoned, without awarding either team a win.
+func (h *Host) closeVacantRoom(ctx context.Context, match *Match) error {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	if err := h.repository.DeleteLobby(ctx, match.Code); err != nil {
-		h.log.Error("delete lobby", "code", match.Code, "error", err)
-		return fmt.Errorf("no se pudo cerrar la mesa. Inténtalo de nuevo")
+	if match.State == nil {
+		if err := h.repository.DeleteLobby(ctx, match.Code); err != nil {
+			h.log.Error("delete lobby", "code", match.Code, "error", err)
+			return fmt.Errorf("no se pudo cerrar la mesa. Inténtalo de nuevo")
+		}
+	} else if match.State.Phase != rules.MatchOver {
+		next := clone(match)
+		next.Expired = true
+		next.Deadline = time.Time{}
+		if err := h.save(ctx, next); err != nil {
+			return err
+		}
 	}
 	delete(h.matches, match.Code)
-	delete(h.lobbyDeadlines, match.Code)
+	delete(h.roomDeadlines, match.Code)
 	delete(h.controllers, match.Code)
+	delete(h.connections, match.Code)
 	h.notify(match.Code)
 	h.notifyListings()
 	return nil
