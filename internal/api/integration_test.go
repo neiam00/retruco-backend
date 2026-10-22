@@ -51,8 +51,14 @@ func TestAccountAndMatchPersistence(t *testing.T) {
 			SiteKey: "integration-site-key", SecretKey: "integration-secret",
 			Client: &http.Client{Transport: turnstileTransport(func(request *http.Request) (*http.Response, error) {
 				require.NoError(t, request.ParseForm())
-				require.Equal(t, "integration-token", request.Form.Get("response"))
-				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"success":true,"hostname":"local.retruco.test","action":"register"}`))}, nil
+				action := "register"
+				if request.Form.Get("response") == "login-token" {
+					action = "login"
+				} else {
+					require.Equal(t, "integration-token", request.Form.Get("response"))
+				}
+				response := fmt.Sprintf(`{"success":true,"hostname":"local.retruco.test","action":%q}`, action)
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(response))}, nil
 			})},
 		},
 	}, repository, host, log)
@@ -233,6 +239,7 @@ func TestAccountAndMatchPersistence(t *testing.T) {
 	// A different cookie jar simulates signing in on another device.
 	third := newClient()
 	var loggedIn store.User
+	credentials["turnstileToken"] = "login-token"
 	require.Equal(t, http.StatusOK, request(third, http.MethodPost, "/api/login", credentials, &loggedIn))
 	assert.Equal(t, account.ID, loggedIn.ID)
 	var history []store.HistoryEntry

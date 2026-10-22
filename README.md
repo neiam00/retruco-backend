@@ -207,7 +207,7 @@ the frontend's public `CARD_ASSET_ORIGIN` with the bucket/CDN origin and rebuild
 Leave it empty to serve the bundled assets. Never place B2 keys in the frontend.
 
 
-## Turnstile registration verification
+## Turnstile account verification
 
 Set `TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY` in `.env` for `make dev`, or
 in the production environment file used by Docker Compose. Both are passed to
@@ -215,18 +215,19 @@ the API container; no frontend rebuild is required to rotate them. Configure a
 Managed widget allowing the frontend hostname and keep `ALLOWED_ORIGINS` aligned
 with those public frontend origins. The secret is never exposed to clients.
 
-The API exposes only the public site key at `GET /api/registration`. Registration
-requires `turnstileToken`; Siteverify must return success, action `register`, and
-an allowed hostname before password hashing, account creation, or a session.
+The API exposes only the public site key at `GET /api/turnstile` (`/api/registration` remains as a compatibility alias). Login and registration
+require `turnstileToken`; Siteverify must return success, the matching `login` or `register` action, and
+an allowed hostname before credential lookup/password comparison, account creation, or a session.
 Requests fail closed when keys are missing, tokens are rejected, or verification
-is unavailable. Login and guest creation do not use Turnstile.
+is unavailable. Guest creation does not use Turnstile. Each login attempt needs a fresh token,
+even after incorrect credentials; registration tokens cannot be used to log in.
 
 For disposable local/browser tests, Cloudflare provides site key
 `1x00000000000000000000AA`, secret `1x0000000000000000000000000000000AA`, and token
 `XXXX.DUMMY.TOKEN.XXXX`. Cloudflare returns synthetic metadata for these test credentials. Only this exact
 public pair and token with `APP_ENV=development` use its success flag without
 widget metadata checks. Real keys and production always require the configured
-hostname and action `register`. Never configure dummy keys in production.
+hostname and matching action. Never configure dummy keys in production.
 
 Go handler tests use an injected HTTP transport to exercise rejection, expiry,
 wrong hostname/action, network failure, and successful account creation without

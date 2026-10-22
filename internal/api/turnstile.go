@@ -14,7 +14,7 @@ import (
 
 const turnstileVerifyURL = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
 
-var errTurnstileRejected = errors.New("turnstile rejected registration")
+var errTurnstileRejected = errors.New("turnstile rejected authentication")
 
 type TurnstileConfig struct {
 	SiteKey     string
@@ -23,15 +23,32 @@ type TurnstileConfig struct {
 	Development bool
 }
 
-func (s *Server) registrationConfig(w http.ResponseWriter, r *http.Request) {
+func (s *Server) turnstileConfig(w http.ResponseWriter, r *http.Request) {
 	if s.config.Turnstile.SiteKey == "" || s.config.Turnstile.SecretKey == "" {
-		fail(w, http.StatusServiceUnavailable, "El registro no está disponible en este momento.")
+		fail(w, http.StatusServiceUnavailable, "La verificación de seguridad no está disponible en este momento.")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"siteKey": s.config.Turnstile.SiteKey})
 }
 
-func (s *Server) verifyRegistration(ctx context.Context, token string) error {
+func (s *Server) requireTurnstile(w http.ResponseWriter, r *http.Request, token, action string) bool {
+	if s.config.Turnstile.SiteKey == "" || s.config.Turnstile.SecretKey == "" {
+		fail(w, http.StatusServiceUnavailable, "La verificación de seguridad no está disponible en este momento.")
+		return false
+	}
+	if err := s.verifyTurnstile(r.Context(), token, action); err != nil {
+		if errors.Is(err, errTurnstileRejected) {
+			fail(w, http.StatusForbidden, "Completa de nuevo la verificación de seguridad.")
+		} else {
+			s.log.Error("authentication verification unavailable", "action", action, "error", err)
+			fail(w, http.StatusServiceUnavailable, "No pudimos verificarte. Inténtalo de nuevo.")
+		}
+		return false
+	}
+	return true
+}
+
+func (s *Server) verifyTurnstile(ctx context.Context, token, action string) error {
 	if token == "" || len(token) > 2048 {
 		return errTurnstileRejected
 	}
@@ -72,7 +89,7 @@ func (s *Server) verifyRegistration(ctx context.Context, token string) error {
 		token == "XXXX.DUMMY.TOKEN.XXXX" && result.Success {
 		return nil
 	}
-	if !result.Success || result.Action != "register" {
+	if !result.Success || result.Action != action {
 		return errTurnstileRejected
 	}
 	// Use configured public frontend origins, never a client-supplied hostname.

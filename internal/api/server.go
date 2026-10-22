@@ -106,7 +106,9 @@ func (s *Server) Handler() http.Handler {
 	r.Get("/api/session", s.session)
 	r.Post("/api/guest", s.guest)
 	r.Post("/api/register", s.register)
-	r.Get("/api/registration", s.registrationConfig)
+	r.Get("/api/turnstile", s.turnstileConfig)
+	// Keep the existing endpoint for clients loaded before login verification shipped.
+	r.Get("/api/registration", s.turnstileConfig)
 	r.Post("/api/login", s.login)
 	r.Post("/api/logout", s.logout)
 	r.Get("/api/history", s.history)
@@ -305,15 +307,13 @@ func (s *Server) guest(w http.ResponseWriter, r *http.Request) {
 var usernamePattern = regexp.MustCompile(`^[a-z0-9_]{3,24}$`)
 
 type credentials struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
+	Username       string `json:"username"`
+	Password       string `json:"password"`
+	TurnstileToken string `json:"turnstileToken"`
 }
 
 func (s *Server) register(w http.ResponseWriter, r *http.Request) {
-	var input struct {
-		credentials
-		TurnstileToken string `json:"turnstileToken"`
-	}
+	var input credentials
 	if decode(r, &input) != nil {
 		fail(w, 400, "Datos inválidos.")
 		return
@@ -323,17 +323,7 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "Usa 3–24 letras, números o guiones bajos y una contraseña de 10–72 bytes.")
 		return
 	}
-	if s.config.Turnstile.SiteKey == "" || s.config.Turnstile.SecretKey == "" {
-		fail(w, http.StatusServiceUnavailable, "El registro no está disponible en este momento.")
-		return
-	}
-	if err := s.verifyRegistration(r.Context(), input.TurnstileToken); err != nil {
-		if errors.Is(err, errTurnstileRejected) {
-			fail(w, http.StatusForbidden, "Completa de nuevo la verificación de seguridad.")
-		} else {
-			s.log.Error("registration verification unavailable", "error", err)
-			fail(w, http.StatusServiceUnavailable, "No pudimos verificarte. Inténtalo de nuevo.")
-		}
+	if !s.requireTurnstile(w, r, input.TurnstileToken, "register") {
 		return
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(input.Password), 12)
@@ -358,6 +348,9 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	var input credentials
 	if decode(r, &input) != nil || len(input.Password) > 72 {
 		fail(w, 400, "Datos inválidos.")
+		return
+	}
+	if !s.requireTurnstile(w, r, input.TurnstileToken, "login") {
 		return
 	}
 	user, hash, err := s.store.Credentials(r.Context(), strings.ToLower(strings.TrimSpace(input.Username)))

@@ -16,6 +16,7 @@ import (
 	"github.com/neiam00/retruco-backend/internal/store"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/crypto/bcrypt"
 )
 
 type turnstileTransport func(*http.Request) (*http.Response, error)
@@ -114,7 +115,7 @@ func TestRegistrationRequiresVerifiedTurnstile(t *testing.T) {
 	}
 }
 
-func TestRegistrationConfigExposesOnlyPublicKeyAndMissingKeysFailClosed(t *testing.T) {
+func TestTurnstileConfigExposesOnlyPublicKeyAndMissingKeysFailClosed(t *testing.T) {
 	for _, scenario := range []struct {
 		name   string
 		config api.TurnstileConfig
@@ -130,12 +131,16 @@ func TestRegistrationConfigExposesOnlyPublicKeyAndMissingKeysFailClosed(t *testi
 			require.NoError(t, err)
 			handler := server.Handler()
 			response := httptest.NewRecorder()
-			handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/registration", nil))
+			handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/turnstile", nil))
 			require.Equal(t, scenario.status, response.Code)
 			assert.NotContains(t, response.Body.String(), "secret-key")
 			assert.Equal(t, "no-store", response.Header().Get("Cache-Control"))
 			if scenario.status == 200 {
 				assert.JSONEq(t, `{"siteKey":"public-key"}`, response.Body.String())
+				legacy := httptest.NewRecorder()
+				handler.ServeHTTP(legacy, httptest.NewRequest(http.MethodGet, "/api/registration", nil))
+				require.Equal(t, http.StatusOK, legacy.Code)
+				assert.JSONEq(t, `{"siteKey":"public-key"}`, legacy.Body.String())
 				return
 			}
 			request := httptest.NewRequest(http.MethodPost, "/api/register", strings.NewReader(`{"username":"player","password":"valid-password","turnstileToken":"anything"}`))
@@ -144,6 +149,84 @@ func TestRegistrationConfigExposesOnlyPublicKeyAndMissingKeysFailClosed(t *testi
 			response = httptest.NewRecorder()
 			handler.ServeHTTP(response, request)
 			assert.Equal(t, http.StatusServiceUnavailable, response.Code)
+		})
+	}
+}
+
+type loginStore struct {
+	registrationStore
+	passwordHash string
+	lookups      int
+}
+
+func (s *loginStore) Credentials(_ context.Context, _ string) (store.User, string, error) {
+	s.lookups++
+	return store.User{ID: "player-id", Name: "player", Registered: true}, s.passwordHash, nil
+}
+
+func TestLoginRequiresVerifiedTurnstileBeforeCheckingCredentials(t *testing.T) {
+	hash, err := bcrypt.GenerateFromPassword([]byte("correct-password"), bcrypt.MinCost)
+	require.NoError(t, err)
+	for _, scenario := range []struct {
+		name        string
+		token       string
+		response    string
+		password    string
+		unavailable bool
+		missingKeys bool
+		wantStatus  int
+		wantLookups int
+	}{
+		{name: "missing token", wantStatus: 403},
+		{name: "expired or reused token", token: "old-token", response: `{"success":false,"error-codes":["timeout-or-duplicate"]}`, wantStatus: 403},
+		{name: "registration token cannot log in", token: "register-token", response: `{"success":true,"hostname":"retru.co.ve","action":"register"}`, wantStatus: 403},
+		{name: "wrong hostname", token: "token", response: `{"success":true,"hostname":"attacker.example","action":"login"}`, wantStatus: 403},
+		{name: "verification unavailable", token: "token", unavailable: true, wantStatus: 503},
+		{name: "missing keys", token: "token", missingKeys: true, wantStatus: 503},
+		{name: "wrong password after verification", token: "valid-token", response: `{"success":true,"hostname":"retru.co.ve","action":"login"}`, password: "wrong-password", wantStatus: 401, wantLookups: 1},
+		{name: "verified login", token: "valid-token", response: `{"success":true,"hostname":"retru.co.ve","action":"login"}`, wantStatus: 200, wantLookups: 1},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			repository := &loginStore{passwordHash: string(hash)}
+			client := &http.Client{Transport: turnstileTransport(func(request *http.Request) (*http.Response, error) {
+				require.NoError(t, request.ParseForm())
+				assert.Equal(t, scenario.token, request.Form.Get("response"))
+				if scenario.unavailable {
+					return nil, errors.New("verification offline")
+				}
+				return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(scenario.response))}, nil
+			})}
+			config := api.TurnstileConfig{SiteKey: "public-key", SecretKey: "secret-key", Client: client}
+			if scenario.missingKeys {
+				config = api.TurnstileConfig{}
+			}
+			server, err := api.New(t.Context(), api.Config{Origins: []string{"https://retru.co.ve"}, Turnstile: config}, repository, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+			require.NoError(t, err)
+			password := scenario.password
+			if password == "" {
+				password = "correct-password"
+			}
+			body := map[string]string{"username": "player", "password": password}
+			if scenario.token != "" {
+				body["turnstileToken"] = scenario.token
+			}
+			payload, err := json.Marshal(body)
+			require.NoError(t, err)
+			request := httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(string(payload)))
+			request.Header.Set("Origin", "https://retru.co.ve")
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			server.Handler().ServeHTTP(response, request)
+			require.Equal(t, scenario.wantStatus, response.Code, response.Body.String())
+			assert.Equal(t, scenario.wantLookups, repository.lookups)
+			assert.Zero(t, repository.users)
+			if scenario.wantStatus == 200 {
+				assert.Equal(t, 1, repository.sessions)
+				assert.NotEmpty(t, response.Header().Get("Set-Cookie"))
+			} else {
+				assert.Zero(t, repository.sessions)
+				assert.Empty(t, response.Header().Get("Set-Cookie"))
+			}
 		})
 	}
 }
