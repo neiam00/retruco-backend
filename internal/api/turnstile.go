@@ -63,15 +63,16 @@ func (s *Server) verifyRegistration(ctx context.Context, token string) error {
 	if err := json.NewDecoder(io.LimitReader(response.Body, 16384)).Decode(&result); err != nil {
 		return fmt.Errorf("decode turnstile response: %w", err)
 	}
-	expectedAction := "register"
-	// Cloudflare's documented local test response uses action "test". Accept it
-	// only with the exact public dummy key pair in explicitly enabled development.
+	// Cloudflare's public dummy pair returns synthetic metadata, not the real
+	// widget action/hostname. Only this exact pair and token in development use
+	// its success flag alone; real keys and production always check metadata.
 	if s.config.Turnstile.Development &&
 		s.config.Turnstile.SiteKey == "1x00000000000000000000AA" &&
-		s.config.Turnstile.SecretKey == "1x0000000000000000000000000000000AA" {
-		expectedAction = "test"
+		s.config.Turnstile.SecretKey == "1x0000000000000000000000000000000AA" &&
+		token == "XXXX.DUMMY.TOKEN.XXXX" && result.Success {
+		return nil
 	}
-	if !result.Success || result.Action != expectedAction {
+	if !result.Success || result.Action != "register" {
 		return errTurnstileRejected
 	}
 	// Use configured public frontend origins, never a client-supplied hostname.

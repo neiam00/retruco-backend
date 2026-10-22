@@ -223,10 +223,10 @@ is unavailable. Login and guest creation do not use Turnstile.
 
 For disposable local/browser tests, Cloudflare provides site key
 `1x00000000000000000000AA`, secret `1x0000000000000000000000000000000AA`, and token
-`XXXX.DUMMY.TOKEN.XXXX`. These test responses use action `test` and hostname
-`localhost`. The exact public pair is supported only with `APP_ENV=development`;
-add a localhost origin alongside the actual test origin. Real keys and production
-always require action `register`. Never configure dummy keys in production.
+`XXXX.DUMMY.TOKEN.XXXX`. Cloudflare returns synthetic metadata for these test credentials. Only this exact
+public pair and token with `APP_ENV=development` use its success flag without
+widget metadata checks. Real keys and production always require the configured
+hostname and action `register`. Never configure dummy keys in production.
 
 Go handler tests use an injected HTTP transport to exercise rejection, expiry,
 wrong hostname/action, network failure, and successful account creation without

@@ -50,8 +50,8 @@ func TestRegistrationRequiresVerifiedTurnstile(t *testing.T) {
 		development bool
 	}{
 		{name: "valid", token: "valid-token", response: `{"success":true,"hostname":"retru.co.ve","action":"register"}`, status: 200, wantStatus: 200, wantCalls: 1},
-		{name: "development test keys", token: "XXXX.DUMMY.TOKEN.XXXX", response: `{"success":true,"hostname":"localhost","action":"test"}`, status: 200, wantStatus: 200, wantCalls: 1, dummyKeys: true, development: true},
-		{name: "production rejects test action", token: "XXXX.DUMMY.TOKEN.XXXX", response: `{"success":true,"hostname":"localhost","action":"test"}`, status: 200, wantStatus: 403, wantCalls: 1, dummyKeys: true},
+		{name: "development test keys", token: "XXXX.DUMMY.TOKEN.XXXX", response: `{"success":true,"hostname":"example.com"}`, status: 200, wantStatus: 200, wantCalls: 1, dummyKeys: true, development: true},
+		{name: "production rejects test action", token: "XXXX.DUMMY.TOKEN.XXXX", response: `{"success":true,"hostname":"example.com"}`, status: 200, wantStatus: 403, wantCalls: 1, dummyKeys: true},
 		{name: "development real keys require register action", token: "token", response: `{"success":true,"hostname":"retru.co.ve","action":"test"}`, status: 200, wantStatus: 403, wantCalls: 1, development: true},
 		{name: "missing token", wantStatus: 403},
 		{name: "oversized token", token: strings.Repeat("a", 2049), wantStatus: 403},
