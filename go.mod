@@ -3,7 +3,7 @@ module github.com/neiam00/retruco-backend
 go 1.27.3
 
 require (
-	github.com/Backblaze/blazer v0.8.0
+	github.com/Backblaze/blazer v0.9.0
 	github.com/coder/websocket v1.8.15
 	github.com/go-chi/chi/v5 v5.5.0
 	github.com/jackc/pgx/v5 v5.11.0

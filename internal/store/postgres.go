@@ -87,8 +87,10 @@ func (p *Postgres) persistMatch(ctx context.Context, code string, payload []byte
 		}
 		return ErrMatchNotFound
 	}
-	for _, member := range members {
-		if _, err = tx.Exec(ctx, `INSERT INTO match_members(match_code,user_id) VALUES($1,$2) ON CONFLICT DO NOTHING`, code, member); err != nil {
+	if len(members) > 0 {
+		// Every move persists the same membership. Batch it into one round trip
+		// instead of making every player's update wait for one query per seat.
+		if _, err = tx.Exec(ctx, `INSERT INTO match_members(match_code,user_id) SELECT $1, unnest($2::text[]) ON CONFLICT DO NOTHING`, code, members); err != nil {
 			return err
 		}
 	}

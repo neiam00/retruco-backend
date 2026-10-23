@@ -68,6 +68,41 @@ func TestAuthenticationRetainsItsTighterRateBudgets(t *testing.T) {
 	}
 }
 
+func TestRateLimitCapacityRecoversWithoutResettingNewerClients(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		server, err := api.New(t.Context(), api.Config{}, nil, nil,
+			slog.New(slog.NewTextHandler(io.Discard, nil)))
+		require.NoError(t, err)
+		handler := server.Handler()
+		request := func(index int) int {
+			r := httptest.NewRequest(http.MethodGet, "/api/health", nil)
+			r.RemoteAddr = fmt.Sprintf("192.0.%d.%d:1234", index/256, index%256)
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, r)
+			return w.Code
+		}
+		for index := range 9999 {
+			require.Equal(t, http.StatusOK, request(index))
+		}
+		time.Sleep(30 * time.Second)
+		for range 120 {
+			require.Equal(t, http.StatusOK, request(9999))
+		}
+		assert.Equal(t, http.StatusTooManyRequests, request(10000), "new clients cannot exceed capacity")
+		assert.Equal(t, http.StatusOK, request(0), "existing clients retain their budget at capacity")
+		time.Sleep(30 * time.Second)
+		for range 120 {
+			require.Equal(t, http.StatusOK, request(10000), "expired clients free capacity immediately")
+		}
+		assert.Equal(t, http.StatusTooManyRequests, request(9999), "the newer client's exhausted budget must remain")
+		time.Sleep(30 * time.Second)
+		assert.Equal(t, http.StatusOK, request(9999))
+		assert.Equal(t, http.StatusTooManyRequests, request(10000), "renewing an older client must not expire a newer one")
+		time.Sleep(30 * time.Second)
+		assert.Equal(t, http.StatusOK, request(10000))
+	})
+}
+
 func TestAuthenticatedProxyKeepsVisitorRateLimitsSeparate(t *testing.T) {
 	server, err := api.New(t.Context(), api.Config{ProxySecret: "test-edge-secret"}, nil, nil,
 		slog.New(slog.NewTextHandler(io.Discard, nil)))

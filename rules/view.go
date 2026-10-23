@@ -124,6 +124,15 @@ func LegalActions(s State, seat int) []Command {
 	if s.Phase != Playing {
 		return legal
 	}
+	// Skip whole families that cannot pass their turn/team guards. Apply remains
+	// the authority for individual commands, without copying State and allocating
+	// rejection errors for every impossible candidate in each player's snapshot.
+	cardTurn := s.Pending == nil && s.Turn == seat
+	responding := s.Pending != nil && s.Pending.Caller != s.Team(seat)
+	canCall := cardTurn || responding && s.Pending.Kind == "truco"
+	if !cardTurn && !responding {
+		return legal
+	}
 	add := func(c Command) {
 		if _, _, err := Apply(s, seat, c); err == nil {
 			legal = append(legal, c)
@@ -135,33 +144,44 @@ func LegalActions(s State, seat int) []Command {
 		}
 		return legal
 	}
-	for _, declaration := range []string{"", "flor", "a_ley", "presento_flor", "flor_flor"} {
-		if s.MandatoryStack {
-			add(Command{Type: "burn", Declaration: declaration})
-		}
-		for _, card := range s.Remaining(seat) {
-			add(Command{Type: "play", Card: card, Declaration: declaration})
-			if !s.MandatoryStack {
-				add(Command{Type: "burn", Card: card, Declaration: declaration})
+	if cardTurn {
+		remaining := s.Remaining(seat)
+		for _, declaration := range []string{"", "flor", "a_ley", "presento_flor", "flor_flor"} {
+			if s.MandatoryStack {
+				add(Command{Type: "burn", Declaration: declaration})
 			}
-			for _, top := range s.Remaining(seat) {
-				if top != card {
-					add(Command{Type: "stack", Card: card, Top: top, Declaration: declaration})
+			for _, card := range remaining {
+				add(Command{Type: "play", Card: card, Declaration: declaration})
+				if !s.MandatoryStack {
+					add(Command{Type: "burn", Card: card, Declaration: declaration})
+				}
+				for _, top := range remaining {
+					if top != card {
+						add(Command{Type: "stack", Card: card, Top: top, Declaration: declaration})
+					}
 				}
 			}
 		}
 	}
 	for _, declaration := range []string{"", "con_mi_flor"} {
-		for _, kind := range []string{"envido", "ley_envido", "flor"} {
-			add(Command{Type: "call", Kind: kind, Declaration: declaration})
+		if canCall {
+			for _, kind := range []string{"envido", "ley_envido", "flor"} {
+				add(Command{Type: "call", Kind: kind, Declaration: declaration})
+			}
+			for _, mode := range []string{"con_ley", "sin_ley"} {
+				add(Command{Type: "call", Kind: "ley_envido", Mode: mode, Declaration: declaration})
+			}
+			for _, amount := range []int{3, 6, 9, 100} {
+				add(Command{Type: "call", Kind: "truco", Amount: amount, Declaration: declaration})
+			}
 		}
-		for _, mode := range []string{"con_ley", "sin_ley"} {
-			add(Command{Type: "call", Kind: "ley_envido", Mode: mode, Declaration: declaration})
-		}
-		for _, amount := range []int{3, 6, 9, 100} {
-			add(Command{Type: "call", Kind: "truco", Amount: amount, Declaration: declaration})
+		if !responding {
+			continue
 		}
 		for _, mode := range []string{"", "con_ley", "sin_ley"} {
+			if mode != "" && (s.Pending.Kind != "ley_envido" || s.Pending.Mode != "") {
+				continue
+			}
 			for _, kind := range []string{"accept", "decline", "flowers_no", "falta"} {
 				add(Command{Type: "respond", Kind: kind, Mode: mode, Declaration: declaration})
 			}

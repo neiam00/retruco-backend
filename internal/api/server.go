@@ -58,6 +58,7 @@ type Server struct {
 	dummyHash       []byte
 	limitsMu        sync.Mutex
 	limits          map[string]window
+	limitOrder      []string
 	voice           *voiceHub
 	turnstileClient *http.Client
 }
@@ -200,10 +201,16 @@ func (s *Server) allow(key string, maximum int) bool {
 	s.limitsMu.Lock()
 	defer s.limitsMu.Unlock()
 	now := time.Now()
-	for id, w := range s.limits {
-		if now.Sub(w.start) >= time.Minute {
-			delete(s.limits, id)
+	// Windows have the same duration and are created under this lock. Expiry
+	// order therefore matches insertion order; active clients need no full scan.
+	for len(s.limitOrder) > 0 {
+		id := s.limitOrder[0]
+		if now.Sub(s.limits[id].start) < time.Minute {
+			break
 		}
+		delete(s.limits, id)
+		s.limitOrder[0] = ""
+		s.limitOrder = s.limitOrder[1:]
 	}
 	entry := s.limits[key]
 	if entry.start.IsZero() {
@@ -211,6 +218,7 @@ func (s *Server) allow(key string, maximum int) bool {
 			return false
 		}
 		entry.start = now
+		s.limitOrder = append(s.limitOrder, key)
 	}
 	entry.count++
 	s.limits[key] = entry
