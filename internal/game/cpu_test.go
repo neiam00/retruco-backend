@@ -146,6 +146,82 @@ func TestCPUControllerTransfersAndRejectsStaleOrHumanSeatCommands(t *testing.T) 
 	assert.Equal(t, -1, finished.CPUController)
 }
 
+func TestCPUCantoRepliesDeferToHumanTeammates(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		kind    string
+		command rules.Command
+		cpuOnly bool
+	}{
+		{"accept truco", "truco", rules.Command{Type: "respond", Kind: "accept"}, false},
+		{"decline truco", "truco", rules.Command{Type: "respond", Kind: "decline"}, false},
+		{"raise truco", "truco", rules.Command{Type: "respond", Kind: "raise", Amount: 6}, false},
+		{"interrupt truco", "truco", rules.Command{Type: "call", Kind: "ley_envido"}, false},
+		{"envido", "envido", rules.Command{Type: "respond", Kind: "decline"}, false},
+		{"ley envido", "ley_envido", rules.Command{Type: "respond", Kind: "decline"}, false},
+		{"flor", "flor", rules.Command{Type: "respond", Kind: "decline"}, false},
+		{"privo", "privo", rules.Command{Type: "respond", Kind: "decline"}, false},
+		{"CPU-only team", "truco", rules.Command{Type: "respond", Kind: "accept"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repository := &memoryRepository{payloads: make(map[string][]byte)}
+			log := slog.New(slog.NewTextHandler(io.Discard, nil))
+			host := game.New(repository, log)
+			ana := store.User{ID: "ana", Name: "Ana"}
+			config := rules.Config{Players: 4, Target: 12}
+			code, err := host.Create(t.Context(), ana, config, false, game.RoomOptions{CPUSeats: []int{1, 2, 3}})
+			require.NoError(t, err)
+			// Restore a deterministic pending wager through the normal persistence boundary.
+			var match game.Match
+			require.NoError(t, json.Unmarshal(repository.payloads[code], &match))
+			state, err := rules.New(config, 0, rules.Deck())
+			require.NoError(t, err)
+			state, _, err = rules.Apply(state, state.Turn, rules.Command{Type: "cut", Cut: 1})
+			require.NoError(t, err)
+			state.Pending = &rules.Wager{Kind: tc.kind, Caller: 1, Value: 3, Previous: 1}
+			cpuSeat := 2
+			if tc.cpuOnly {
+				state.Pending.Caller = 0
+				cpuSeat = 1
+			}
+			match.State = &state
+			repository.payloads[code], err = json.Marshal(match)
+			require.NoError(t, err)
+			host = game.New(repository, log)
+			require.NoError(t, host.Restore(t.Context()))
+			disconnect := host.ConnectPlayer(code, ana.ID, "ana-tab")
+			defer disconnect()
+
+			// The command would otherwise be legal for this CPU, so rejection must
+			// come from yielding the team's decision to its human player.
+			require.Contains(t, rules.LegalActions(state, cpuSeat), tc.command)
+			work := host.CPUWork(code, ana.ID, "ana-tab")
+			assert.True(t, work.Controlled)
+			input := game.Input{ID: "cpu-reply", CPUSeat: &cpuSeat, Revision: state.Revision, Command: tc.command}
+			if tc.cpuOnly {
+				require.NotNil(t, work.View)
+				assert.Equal(t, cpuSeat, work.Seat)
+				require.NoError(t, host.HandleFromConnection(t.Context(), code, ana, input, "ana-tab"))
+			} else {
+				assert.Nil(t, work.View)
+				assert.Equal(t, -1, work.Seat)
+				require.Error(t, host.HandleFromConnection(t.Context(), code, ana, input, "ana-tab"))
+				waiting, err := host.Snapshot(code, ana.ID, 0)
+				require.NoError(t, err)
+				assert.Equal(t, state.Revision, waiting.State.Revision)
+				assert.Equal(t, state.Pending, waiting.State.Pending)
+				require.Contains(t, waiting.State.Legal, tc.command)
+				require.NoError(t, host.Handle(t.Context(), code, ana, game.Input{
+					ID: "human-reply", Revision: waiting.State.Revision, Command: tc.command,
+				}))
+			}
+			after, err := host.Snapshot(code, ana.ID, 0)
+			require.NoError(t, err)
+			assert.Equal(t, state.Revision+1, after.State.Revision)
+		})
+	}
+}
+
 func TestUnattendedCPURoomDoesNotAdvanceExpiredDeadline(t *testing.T) {
 	repository := &memoryRepository{payloads: make(map[string][]byte)}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))

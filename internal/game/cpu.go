@@ -148,6 +148,24 @@ func (h *Host) controllerSeat(match *Match) int {
 	return seatOf(match, h.connections[match.Code][id].userID)
 }
 
+// A human teammate owns pending canto decisions, including counter-cantos.
+// CPU-only teams must still answer so matches can continue.
+func cpuDefersCanto(match *Match, seat int) bool {
+	if match.State == nil || match.State.Pending == nil {
+		return false
+	}
+	team := match.State.Team(seat)
+	if match.State.Pending.Caller == team {
+		return false
+	}
+	for other, player := range match.Seats {
+		if player.ID != "" && !player.CPU && match.State.Team(other) == team {
+			return true
+		}
+	}
+	return false
+}
+
 func (h *Host) CPUWork(code, userID, connectionID string) CPUWork {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -161,7 +179,7 @@ func (h *Host) CPUWork(code, userID, connectionID string) CPUWork {
 		return work
 	}
 	for seat, player := range match.Seats {
-		if !player.CPU {
+		if !player.CPU || cpuDefersCanto(match, seat) {
 			continue
 		}
 		if match.State.Pending == nil && match.State.Turn != seat {

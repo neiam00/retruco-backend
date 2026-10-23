@@ -570,6 +570,9 @@ func (h *Host) HandleFromConnection(ctx context.Context, code string, user store
 			if input.Revision != m.State.Revision {
 				return fmt.Errorf("la mesa cambió. Revisa el estado actualizado")
 			}
+			if input.CPUSeat != nil && cpuDefersCanto(m, seat) {
+				return fmt.Errorf("el canto debe responderlo un jugador humano del equipo")
+			}
 			state, events, err := rules.Apply(*m.State, seat, input.Command)
 			if err != nil {
 				return fmt.Errorf("esa jugada no está disponible ahora")
