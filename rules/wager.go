@@ -142,7 +142,7 @@ func (s *State) respond(seat int, c Command) error {
 	if wager.Terminal {
 		return fmt.Errorf("la falta is terminal")
 	}
-	next := wager.Value + c.Amount
+	var next int
 	terminal := false
 	if wager.Kind == "truco" {
 		next = c.Amount
@@ -155,8 +155,13 @@ func (s *State) respond(seat int, c Command) error {
 			return fmt.Errorf("la falta cannot lower the wager")
 		}
 		terminal = true
-	} else if c.Amount <= 0 || next > s.Config.Target {
-		return fmt.Errorf("envido raise exceeds limit or is not positive")
+	} else {
+		// Bound the operands before addition: a positive int can otherwise wrap
+		// into a negative wager and pass an upper-bound check on the result.
+		if wager.Value < 0 || wager.Value > s.Config.Target || c.Amount <= 0 || c.Amount > s.Config.Target-wager.Value {
+			return fmt.Errorf("envido raise exceeds limit or is not positive")
+		}
+		next = wager.Value + c.Amount
 	}
 	wager.Previous, wager.Value, wager.Caller, wager.Terminal = wager.Value, next, team, terminal
 	s.Pending = &wager

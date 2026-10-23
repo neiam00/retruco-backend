@@ -1,16 +1,72 @@
 package api_test
 
 import (
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	"github.com/neiam00/retruco-backend/internal/api"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestRequestPathChurnCannotExhaustOtherClients(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		server, err := api.New(t.Context(), api.Config{}, nil, nil,
+			slog.New(slog.NewTextHandler(io.Discard, nil)))
+		require.NoError(t, err)
+		handler := server.Handler()
+		request := func(method, path, address string) int {
+			r := httptest.NewRequest(method, path, nil)
+			r.RemoteAddr = address
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, r)
+			return w.Code
+		}
+		limited := 0
+		for index := range 10001 {
+			path := fmt.Sprintf("/api/missing-%d", index)
+			if index%2 == 0 {
+				path = fmt.Sprintf("/api/matches/%d/missing", index)
+			}
+			if request(http.MethodGet, path, "192.0.2.1:1234") == http.StatusTooManyRequests {
+				limited++
+			}
+		}
+		assert.Equal(t, 10001-120, limited, "varying paths must share the same client budget")
+		assert.Equal(t, http.StatusTooManyRequests, request(http.MethodHead, "/api/health", "192.0.2.1:1234"))
+		assert.Equal(t, http.StatusOK, request(http.MethodGet, "/api/health", "192.0.2.2:1234"))
+		time.Sleep(time.Minute)
+		assert.Equal(t, http.StatusOK, request(http.MethodGet, "/api/health", "192.0.2.1:1234"))
+	})
+}
+
+func TestAuthenticationRetainsItsTighterRateBudgets(t *testing.T) {
+	server, err := api.New(t.Context(), api.Config{}, nil, nil,
+		slog.New(slog.NewTextHandler(io.Discard, nil)))
+	require.NoError(t, err)
+	handler := server.Handler()
+	for _, path := range []string{"/api/login", "/api/register", "/api/guest"} {
+		t.Run(path, func(t *testing.T) {
+			for index := range 11 {
+				// GET reaches admission control but cannot perform an account mutation.
+				r := httptest.NewRequest(http.MethodGet, path, nil)
+				w := httptest.NewRecorder()
+				handler.ServeHTTP(w, r)
+				want := http.StatusMethodNotAllowed
+				if index == 10 {
+					want = http.StatusTooManyRequests
+				}
+				require.Equal(t, want, w.Code)
+			}
+		})
+	}
+}
 
 func TestAuthenticatedProxyKeepsVisitorRateLimitsSeparate(t *testing.T) {
 	server, err := api.New(t.Context(), api.Config{ProxySecret: "test-edge-secret"}, nil, nil,

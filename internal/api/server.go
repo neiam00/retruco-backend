@@ -179,10 +179,14 @@ func (s *Server) security(next http.Handler) http.Handler {
 			}
 		}
 		limit := 120
+		// Paths (including unknown routes and match codes) are attacker-controlled.
+		// Keep a fixed number of HTTP buckets per client, separate from WS users.
+		key := "http:" + ip
 		if r.URL.Path == "/api/login" || r.URL.Path == "/api/register" || r.URL.Path == "/api/guest" {
 			limit = 10
+			key += ":" + r.URL.Path
 		}
-		if !s.allow(ip+":"+r.URL.Path, limit) {
+		if !s.allow(key, limit) {
 			w.Header().Set("Retry-After", "60")
 			fail(w, 429, "Demasiadas solicitudes. Intenta en un minuto.")
 			return

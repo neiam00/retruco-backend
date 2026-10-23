@@ -2,6 +2,7 @@ package rules_test
 
 import (
 	"encoding/json"
+	"math"
 	"slices"
 	"testing"
 
@@ -9,6 +10,49 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestAdditiveRaisesRejectOverflowWithoutChangingTheHand(t *testing.T) {
+	ley := apply(t, simple(t), 1, rules.Command{Type: "call", Kind: "ley_envido"})
+	for _, scenario := range []struct {
+		name  string
+		state rules.State
+		seat  int
+		mode  string
+	}{
+		{name: "envido", state: apply(t, simple(t), 1, rules.Command{Type: "call", Kind: "envido"}), seat: 0},
+		{name: "flor", state: opposingFlores(t), seat: 1},
+		{name: "ley awaiting choice", state: ley, seat: 0, mode: "con_ley"},
+		{name: "chosen con ley", state: apply(t, ley, 0, rules.Command{Type: "respond", Kind: "raise", Amount: 2, Mode: "con_ley"}), seat: 1},
+		{name: "chosen sin ley", state: apply(t, ley, 0, rules.Command{Type: "respond", Kind: "raise", Amount: 2, Mode: "sin_ley"}), seat: 1},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			remaining := scenario.state.Config.Target - scenario.state.Pending.Value
+			for _, amount := range []struct {
+				name  string
+				value int
+			}{
+				{name: "maximum integer", value: math.MaxInt},
+				{name: "over target", value: remaining + 1},
+				{name: "zero", value: 0},
+				{name: "negative", value: -1},
+			} {
+				t.Run(amount.name, func(t *testing.T) {
+					command := rules.Command{Type: "respond", Kind: "raise", Amount: amount.value, Mode: scenario.mode}
+					next, events, err := rules.Apply(scenario.state, scenario.seat, command)
+					require.Error(t, err)
+					assert.Equal(t, scenario.state, next)
+					assert.Empty(t, events)
+				})
+			}
+			for _, amount := range []int{1, remaining} {
+				next, _, err := rules.Apply(scenario.state, scenario.seat,
+					rules.Command{Type: "respond", Kind: "raise", Amount: amount, Mode: scenario.mode})
+				require.NoError(t, err)
+				assert.Equal(t, scenario.state.Pending.Value+amount, next.Pending.Value)
+			}
+		})
+	}
+}
 
 func TestTrucoVoiceAlternatesAcrossTurnsAndRounds(t *testing.T) {
 	state := apply(t, simple(t), 1, rules.Command{Type: "call", Kind: "truco"})
