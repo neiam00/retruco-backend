@@ -218,6 +218,9 @@ func (p position) declarationScore(command rules.Command) int {
 			expected = "flor_flor"
 		case "call", "respond":
 			expected = "con_mi_flor"
+			if command.Type == "call" && command.Kind == "ley_envido" {
+				expected = ""
+			}
 		}
 	}
 	score := 0

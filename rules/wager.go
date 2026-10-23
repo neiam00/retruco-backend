@@ -42,6 +42,9 @@ func (s *State) call(seat int, c Command) error {
 		// even if the caller adds flor wording. Receta is always protected.
 		s.burnFlor(seat)
 	case "ley_envido":
+		if c.Declaration == "con_mi_flor" || c.Declaration == "con_flor" {
+			return fmt.Errorf("a ley envido cannot announce flor")
+		}
 		if c.Mode != "" && c.Mode != "con_ley" && c.Mode != "sin_ley" {
 			return fmt.Errorf("invalid ley mode")
 		}
@@ -50,6 +53,9 @@ func (s *State) call(seat int, c Command) error {
 		}
 		wager.Mode = c.Mode
 		s.Ley = true
+		// The call itself says A ley, before either teammate shows a card.
+		// Choosing sin ley changes the comparison, not either flor's validity.
+		s.DoubleFlor[team] = true
 	case "flor":
 		if !s.Players[seat].FlorValid || s.Players[seat].Holding.Receta || !s.teamHasFlor(1-team, false) {
 			return fmt.Errorf("flor contest requires opposing flores")

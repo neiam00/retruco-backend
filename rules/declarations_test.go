@@ -46,3 +46,10 @@ func TestALeyIsOnlyAvailableInTheFirstRound(t *testing.T) {
 	}
 	assert.Equal(t, rules.HandOver, state.Phase)
 }
+
+func TestLeyEnvidoRejectsFlorPrefix(t *testing.T) {
+	state := simple(t)
+	for _, declaration := range []string{"con_mi_flor", "con_flor"} {
+		assertRejectedCanto(t, state, state.Turn, rules.Command{Type: "call", Kind: "ley_envido", Declaration: declaration})
+	}
+}

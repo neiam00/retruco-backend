@@ -39,6 +39,9 @@ func TestPolicyCompletesMatchesUsingOnlyAuthorizedViews(t *testing.T) {
 					require.Empty(t, decision.Error)
 					require.NotNil(t, decision.Command)
 					require.Contains(t, view.Legal, *decision.Command)
+					if decision.Command.Type == "call" && decision.Command.Kind == "ley_envido" {
+						assert.Empty(t, decision.Command.Declaration, "ley calls must not announce flor")
+					}
 					state, _, err = rules.Apply(state, seat, *decision.Command)
 					require.NoError(t, err, "players=%d flor=%t seed=%d step=%d", players, required, seed, step)
 				}
