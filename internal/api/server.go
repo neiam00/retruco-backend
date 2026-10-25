@@ -36,7 +36,7 @@ type Repository interface {
 	CreateUser(context.Context, store.User, string, string) error
 	Credentials(context.Context, string) (store.User, string, error)
 	CreateSession(context.Context, string, string, time.Time) error
-	Session(context.Context, string) (store.User, error)
+	Session(context.Context, string) (store.Session, error)
 	DeleteSession(context.Context, string) error
 	History(context.Context, string) ([]store.HistoryEntry, error)
 }
@@ -61,6 +61,7 @@ type Server struct {
 	limitOrder      []string
 	voice           *voiceHub
 	turnstileClient *http.Client
+	sessions        *sessionCache
 }
 
 type window struct {
@@ -95,6 +96,7 @@ func New(ctx context.Context, config Config, repository Repository, host *game.H
 		limits:          map[string]window{},
 		voice:           newVoiceHub(),
 		turnstileClient: turnstileClient,
+		sessions:        newSessionCache(),
 	}, nil
 }
 
@@ -258,7 +260,7 @@ func (s *Server) authenticate(r *http.Request) (store.User, error) {
 	if err != nil {
 		return store.User{}, err
 	}
-	return s.store.Session(r.Context(), digest(cookie.Value))
+	return s.sessions.lookup(r.Context(), digest(cookie.Value), s.store.Session)
 }
 
 func (s *Server) requireUser(w http.ResponseWriter, r *http.Request) (store.User, bool) {
@@ -382,10 +384,14 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 	if cookie, err := r.Cookie("retruco_session"); err == nil {
-		if err := s.store.DeleteSession(r.Context(), digest(cookie.Value)); err != nil {
+		hash := digest(cookie.Value)
+		if err := s.store.DeleteSession(r.Context(), hash); err != nil {
 			s.internalError(w, err)
 			return
 		}
+		// Invalidate before acknowledging logout, including lookups that read
+		// the session before deletion but have not yet returned from storage.
+		s.sessions.revoke(hash)
 	}
 	// #nosec G124 -- Cookie deletion preserves the deployment-configured Secure setting used when issuing the cookie.
 	http.SetCookie(w, &http.Cookie{Name: "retruco_session", Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: s.config.SecureCookies, SameSite: http.SameSiteLaxMode})

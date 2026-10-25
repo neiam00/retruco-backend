@@ -252,6 +252,24 @@ func TestAccountAndMatchPersistence(t *testing.T) {
 	require.Equal(t, http.StatusOK, request(third, http.MethodPost, "/api/logout", struct{}{}, nil))
 	assert.Equal(t, http.StatusUnauthorized, request(third, http.MethodGet, "/api/history", nil, nil))
 
+	// This socket still holds the guest's original cookie after HTTP logout.
+	// Its previously warmed cache entry must not authorize another game action.
+	require.Equal(t, http.StatusOK, request(second, http.MethodPost, "/api/logout", struct{}{}, nil))
+	err = wsjson.Write(ctx, cpuConnection, map[string]any{"input": game.Input{ID: "after-logout", Chat: "must not be saved"}})
+	if err == nil {
+		for {
+			var message cpuSnapshot
+			err = wsjson.Read(ctx, cpuConnection, &message)
+			if err != nil {
+				break
+			}
+		}
+	}
+	require.Error(t, err, "the authenticated socket must close after revocation")
+	view, err := host.Snapshot(cpuRoom.Code, "spectator", 0)
+	require.NoError(t, err)
+	assert.Empty(t, view.Chat, "logout must reject the action before persisting it")
+
 	attack, err := http.NewRequestWithContext(ctx, http.MethodPost, httpServer.URL+"/api/guest", strings.NewReader(`{"name":"untrusted"}`))
 	require.NoError(t, err)
 	attack.Header.Set("Origin", "https://untrusted.example")

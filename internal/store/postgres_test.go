@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"os"
 	"testing"
+	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/neiam00/retruco-backend/internal/store"
 	"github.com/stretchr/testify/assert"
@@ -48,6 +50,34 @@ func TestMatchCodeReservationCannotReplaceHistory(t *testing.T) {
 	assert.JSONEq(t, string(finished), string(stored))
 	err = repository.SaveMatch(t.Context(), code+"-missing", finished, true, []string{owner.ID})
 	require.ErrorIs(t, err, store.ErrMatchNotFound, "an update must not silently recreate a missing match")
+	err = repository.SaveMatch(t.Context(), code+"-missing", finished, true, nil)
+	require.ErrorIs(t, err, store.ErrMatchNotFound, "the ordinary-move path must also reject missing matches")
+}
+
+func TestSessionReturnsDatabaseExpirationAndRejectsExpiredOrDeletedTokens(t *testing.T) {
+	databaseURL := os.Getenv("DATABASE_TEST_URL")
+	if databaseURL == "" {
+		t.Skip("DATABASE_TEST_URL must identify a disposable migrated PostgreSQL database")
+	}
+	pool, err := pgxpool.New(t.Context(), databaseURL)
+	require.NoError(t, err)
+	defer pool.Close()
+	repository := store.New(pool)
+	user := store.User{ID: rand.Text(), Name: "Session owner"}
+	require.NoError(t, repository.CreateUser(t.Context(), user, "", ""))
+	hash := rand.Text()
+	expires := time.Now().Add(time.Hour).Truncate(time.Microsecond)
+	require.NoError(t, repository.CreateSession(t.Context(), hash, user.ID, expires))
+	session, err := repository.Session(t.Context(), hash)
+	require.NoError(t, err)
+	assert.Equal(t, user, session.User)
+	assert.True(t, expires.Equal(session.ExpiresAt))
+	require.NoError(t, repository.DeleteSession(t.Context(), hash))
+	_, err = repository.Session(t.Context(), hash)
+	require.ErrorIs(t, err, pgx.ErrNoRows)
+	require.NoError(t, repository.CreateSession(t.Context(), hash, user.ID, time.Now().Add(-time.Second)))
+	_, err = repository.Session(t.Context(), hash)
+	require.ErrorIs(t, err, pgx.ErrNoRows)
 }
 
 func TestHistoryIncludesTeamsAndHumanAndCPUPlayers(t *testing.T) {
@@ -152,12 +182,13 @@ func TestMatchMembershipUpdatesAreAtomicAndIdempotent(t *testing.T) {
 	for range 2 {
 		require.NoError(t, repository.SaveMatch(t.Context(), code, updated, true, []string{owner.ID, guest.ID, guest.ID}))
 	}
-	require.NoError(t, repository.SaveMatch(t.Context(), code, updated, true, nil), "an empty membership list preserves existing members")
+	stateOnly := []byte(`{"State":{"Scores":[12,3],"Winner":0}}`)
+	require.NoError(t, repository.SaveMatch(t.Context(), code, stateOnly, true, nil), "an empty membership list preserves existing members")
 	for _, user := range []store.User{owner, guest} {
 		history, err := repository.History(t.Context(), user.ID)
 		require.NoError(t, err)
 		require.Len(t, history, 1)
-		assert.Equal(t, [2]int{12, 0}, history[0].Scores)
+		assert.Equal(t, [2]int{12, 3}, history[0].Scores, "ordinary moves update state without rewriting memberships")
 		assert.True(t, history[0].Finished)
 	}
 }

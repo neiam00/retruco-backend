@@ -19,6 +19,7 @@ import (
 // Repository implementations must support concurrent calls for different rooms.
 type Repository interface {
 	CreateMatch(context.Context, string, []byte, []string) error
+	// SaveMatch adds supplied members; nil preserves all existing memberships.
 	SaveMatch(context.Context, string, []byte, bool, []string) error
 	DeleteLobby(context.Context, string) error
 	ActiveMatches(context.Context) ([][]byte, error)
@@ -197,19 +198,25 @@ func matchCode() (string, error) {
 }
 
 func (h *Host) save(ctx context.Context, match *Match) error {
-	return h.persist(ctx, match, false)
+	return h.persist(ctx, match, false, nil)
 }
 
-func (h *Host) persist(ctx context.Context, match *Match, create bool) error {
+// Memberships are historical: leaving never removes one, and rejoining is an
+// idempotent addition in the store. Ordinary moves have no membership changes.
+func addedHumanMembers(previous, next *Match) []string {
+	var members []string
+	for _, seat := range next.Seats {
+		if seat.ID != "" && !seat.CPU && (previous == nil || seatOf(previous, seat.ID) < 0) {
+			members = append(members, seat.ID)
+		}
+	}
+	return members
+}
+
+func (h *Host) persist(ctx context.Context, match *Match, create bool, members []string) error {
 	payload, err := json.Marshal(match)
 	if err != nil {
 		return err
-	}
-	members := []string{}
-	for _, seat := range match.Seats {
-		if seat.ID != "" && !seat.CPU {
-			members = append(members, seat.ID)
-		}
 	}
 	finished := match.Expired || (match.State != nil && match.State.Phase == rules.MatchOver)
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -281,7 +288,7 @@ func (h *Host) Create(ctx context.Context, user store.User, config rules.Config,
 		h.reservations[generated] = true
 		h.mu.Unlock()
 
-		err = h.persist(ctx, match, true)
+		err = h.persist(ctx, match, true, addedHumanMembers(nil, match))
 		h.mu.Lock()
 		delete(h.reservations, generated)
 		if err == nil {
@@ -367,7 +374,7 @@ func clone(m *Match) *Match {
 func (h *Host) commit(ctx context.Context, r *room, next *Match) error {
 	previous := r.match
 	next.LastActivity = time.Now()
-	if err := h.save(ctx, next); err != nil {
+	if err := h.persist(ctx, next, false, addedHumanMembers(previous, next)); err != nil {
 		return err
 	}
 	r.match = next

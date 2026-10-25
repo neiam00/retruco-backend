@@ -16,6 +16,13 @@ type User struct {
 	Registered bool   `json:"registered"`
 }
 
+// Session carries the database expiration so cached authentication cannot
+// extend a session beyond its original lifetime.
+type Session struct {
+	User      User
+	ExpiresAt time.Time
+}
+
 type Postgres struct{ pool *pgxpool.Pool }
 
 var (
@@ -43,10 +50,10 @@ func (p *Postgres) CreateSession(ctx context.Context, hash, userID string, expir
 	return err
 }
 
-func (p *Postgres) Session(ctx context.Context, hash string) (User, error) {
-	var user User
-	err := p.pool.QueryRow(ctx, `SELECT u.id,u.name,u.username IS NOT NULL FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=$1 AND s.expires_at>now()`, hash).Scan(&user.ID, &user.Name, &user.Registered)
-	return user, err
+func (p *Postgres) Session(ctx context.Context, hash string) (Session, error) {
+	var session Session
+	err := p.pool.QueryRow(ctx, `SELECT u.id,u.name,u.username IS NOT NULL,s.expires_at FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=$1 AND s.expires_at>now()`, hash).Scan(&session.User.ID, &session.User.Name, &session.User.Registered, &session.ExpiresAt)
+	return session, err
 }
 
 func (p *Postgres) DeleteSession(ctx context.Context, hash string) error {
@@ -54,7 +61,21 @@ func (p *Postgres) DeleteSession(ctx context.Context, hash string) error {
 	return err
 }
 
+const updateMatchSQL = `UPDATE matches SET payload=$2, finished=$3, updated_at=now() WHERE code=$1`
+
+// SaveMatch adds only the supplied memberships, retaining historical members.
+// Without additions, a single UPDATE atomically persists an ordinary move.
 func (p *Postgres) SaveMatch(ctx context.Context, code string, payload []byte, finished bool, members []string) error {
+	if len(members) == 0 {
+		result, err := p.pool.Exec(ctx, updateMatchSQL, code, payload, finished)
+		if err != nil {
+			return err
+		}
+		if result.RowsAffected() == 0 {
+			return ErrMatchNotFound
+		}
+		return nil
+	}
 	return p.persistMatch(ctx, code, payload, finished, members, false)
 }
 
@@ -73,7 +94,7 @@ func (p *Postgres) persistMatch(ctx context.Context, code string, payload []byte
 		// Rollback is best-effort cleanup and is also called after a successful commit.
 		_ = tx.Rollback(ctx)
 	}()
-	statement := `UPDATE matches SET payload=$2, finished=$3, updated_at=now() WHERE code=$1`
+	statement := updateMatchSQL
 	if create {
 		statement = `INSERT INTO matches(code,payload,finished) VALUES($1,$2,$3) ON CONFLICT(code) DO NOTHING`
 	}
@@ -88,8 +109,8 @@ func (p *Postgres) persistMatch(ctx context.Context, code string, payload []byte
 		return ErrMatchNotFound
 	}
 	if len(members) > 0 {
-		// Every move persists the same membership. Batch it into one round trip
-		// instead of making every player's update wait for one query per seat.
+		// New memberships and the snapshot must commit together. Existing
+		// memberships remain intact when a player leaves or later rejoins.
 		if _, err = tx.Exec(ctx, `INSERT INTO match_members(match_code,user_id) SELECT $1, unnest($2::text[]) ON CONFLICT DO NOTHING`, code, members); err != nil {
 			return err
 		}

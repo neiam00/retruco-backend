@@ -381,6 +381,64 @@ func TestPersistenceFailureDoesNotPublishAnUncommittedMove(t *testing.T) {
 	assert.Equal(t, before.Sequence, after.Sequence)
 }
 
+type membershipRepository struct {
+	*memoryRepository
+	additions [][]string
+}
+
+func (r *membershipRepository) CreateMatch(ctx context.Context, code string, payload []byte, members []string) error {
+	r.additions = append(r.additions, append([]string(nil), members...))
+	return r.memoryRepository.CreateMatch(ctx, code, payload, members)
+}
+
+func (r *membershipRepository) SaveMatch(ctx context.Context, code string, payload []byte, finished bool, members []string) error {
+	r.additions = append(r.additions, append([]string(nil), members...))
+	return r.memoryRepository.SaveMatch(ctx, code, payload, finished, members)
+}
+
+func TestMembershipWritesOnlyAddNewHumans(t *testing.T) {
+	r := &membershipRepository{memoryRepository: &memoryRepository{payloads: make(map[string][]byte)}}
+	host := game.New(r, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	owner := store.User{ID: "owner", Name: "Owner"}
+	guest := store.User{ID: "guest", Name: "Guest"}
+	partner := store.User{ID: "partner", Name: "Partner"}
+	code, err := host.Create(t.Context(), owner, rules.Config{Players: 4, Target: 12}, false, game.RoomOptions{CPUSeats: []int{3}})
+	require.NoError(t, err)
+	disconnect := host.ConnectPlayer(code, owner.ID, "owner-tab")
+	defer disconnect()
+	seat := 1
+	r.fail = true
+	require.Error(t, host.Join(t.Context(), code, guest, &seat))
+	r.fail = false
+	require.NoError(t, host.Join(t.Context(), code, guest, &seat))
+	require.NoError(t, host.Handle(t.Context(), code, guest, game.Input{ID: "leave-lobby", Command: rules.Command{Type: "leave"}}))
+	require.NoError(t, host.Join(t.Context(), code, guest, &seat))
+	seat = 2
+	require.NoError(t, host.Join(t.Context(), code, partner, &seat))
+	before, err := host.Snapshot(code, owner.ID, 0)
+	require.NoError(t, err)
+	input := game.Input{ID: "cut", Revision: before.State.Revision, Command: rules.Command{Type: "cut", Cut: 19}}
+	actor := owner
+	if before.State.Turn == 3 {
+		cpuSeat := 3
+		input.CPUSeat = &cpuSeat
+	} else {
+		actor = []store.User{owner, guest, partner}[before.State.Turn]
+	}
+	require.NoError(t, host.HandleFromConnection(t.Context(), code, actor, input, "owner-tab"))
+	require.NoError(t, host.Handle(t.Context(), code, owner, game.Input{ID: "chat", Chat: "hello"}))
+	view, err := host.Snapshot(code, owner.ID, 0)
+	require.NoError(t, err)
+	require.NoError(t, host.Handle(t.Context(), code, owner, game.Input{ID: "forfeit", Revision: view.State.Revision, Command: rules.Command{Type: "leave"}}))
+	assert.Equal(t, [][]string{
+		{"owner"},            // CPU seats never get history memberships.
+		{"guest"}, {"guest"}, // A failed join must retry its membership addition.
+		nil, {"guest"}, // Leaving preserves history; rejoining is idempotent in storage.
+		{"partner"},
+		nil, nil, nil, // Moves, chat and match completion add no memberships.
+	}, r.additions)
+}
+
 func TestCantoInterruptionAndResumptionEachReceiveThirtySeconds(t *testing.T) {
 	host, repository, code, players := newHost(t, false)
 	view := cut(t, host, code, players)

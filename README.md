@@ -107,6 +107,16 @@ independently per room, with at most one timer operation per room and shutdown
 waiting for outstanding timer work. Concurrent room creation reserves capacity
 before persistence, so the 1,000-active-table limit includes pending creations.
 
+Ordinary moves persist with one atomic match update. Creation and newly seated
+humans still write membership and state in one transaction; leaving does not
+remove historical membership. Session validation uses a 4,096-entry LRU cache
+for up to 30 seconds, bounded by the database session expiration. Concurrent
+lookups for one token share a database read. Successful logout immediately
+invalidates that token and any in-flight lookup before returning, so the next
+HTTP or WebSocket authorization rejects the old cookie. Direct database changes
+or revocations outside this API instance may take up to 30 seconds to appear;
+multiple API instances would require coordinated invalidation.
+
 Unstarted tables are deleted when their last connected human leaves explicitly. When all
 seated humans disconnect, there is a 10-second grace period for a page refresh
 or brief connection loss. Another connected tab keeps the room alive;
