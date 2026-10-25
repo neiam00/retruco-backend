@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"sync"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -18,18 +19,27 @@ import (
 )
 
 type memoryRepository struct {
+	mu       sync.Mutex
 	payloads map[string][]byte
 	fail     bool
 }
 
 func (repository *memoryRepository) CreateMatch(ctx context.Context, code string, payload []byte, members []string) error {
+	repository.mu.Lock()
+	defer repository.mu.Unlock()
 	if _, exists := repository.payloads[code]; exists {
 		return store.ErrMatchCodeInUse
 	}
-	return repository.SaveMatch(ctx, code, payload, false, members)
+	return repository.saveMatch(code, payload)
 }
 
 func (repository *memoryRepository) SaveMatch(_ context.Context, code string, payload []byte, _ bool, _ []string) error {
+	repository.mu.Lock()
+	defer repository.mu.Unlock()
+	return repository.saveMatch(code, payload)
+}
+
+func (repository *memoryRepository) saveMatch(code string, payload []byte) error {
 	if repository.fail {
 		return errors.New("storage unavailable")
 	}
@@ -38,6 +48,8 @@ func (repository *memoryRepository) SaveMatch(_ context.Context, code string, pa
 }
 
 func (repository *memoryRepository) ActiveMatches(context.Context) ([][]byte, error) {
+	repository.mu.Lock()
+	defer repository.mu.Unlock()
 	var payloads [][]byte
 	for _, payload := range repository.payloads {
 		var match game.Match
@@ -53,6 +65,8 @@ func (repository *memoryRepository) ActiveMatches(context.Context) ([][]byte, er
 }
 
 func (repository *memoryRepository) DeleteLobby(_ context.Context, code string) error {
+	repository.mu.Lock()
+	defer repository.mu.Unlock()
 	if repository.fail {
 		return errors.New("storage unavailable")
 	}

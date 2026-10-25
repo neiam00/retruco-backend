@@ -16,6 +16,7 @@ import (
 	"github.com/neiam00/retruco-backend/rules"
 )
 
+// Repository implementations must support concurrent calls for different rooms.
 type Repository interface {
 	CreateMatch(context.Context, string, []byte, []string) error
 	SaveMatch(context.Context, string, []byte, bool, []string) error
@@ -96,31 +97,30 @@ type Snapshot struct {
 }
 
 type Host struct {
-	mu               sync.Mutex
-	matches          map[string]*Match
-	listeners        map[string]map[chan struct{}]bool
+	// mu protects only the registry, cached listings, capacity and listing
+	// subscribers. Never hold it across database I/O or while locking a room.
+	mu               sync.RWMutex
+	rooms            map[string]*room
+	listings         map[string]Listing
+	reservations     map[string]bool
+	active           int
 	listingListeners map[chan struct{}]bool
-	roomDeadlines    map[string]time.Time
 	repository       Repository
 	log              *slog.Logger
-	connections      map[string]map[string]playerConnection
-	controllers      map[string]string
-	connectionOrder  uint64
 }
 
 func New(repository Repository, log *slog.Logger) *Host {
 	return &Host{
-		matches:          map[string]*Match{},
-		listeners:        map[string]map[chan struct{}]bool{},
+		rooms:            make(map[string]*room),
+		listings:         make(map[string]Listing),
+		reservations:     make(map[string]bool),
 		listingListeners: make(map[chan struct{}]bool),
-		roomDeadlines:    make(map[string]time.Time),
 		repository:       repository,
 		log:              log,
-		connections:      make(map[string]map[string]playerConnection),
-		controllers:      make(map[string]string),
 	}
 }
 
+// Restore loads persisted rooms before the host starts serving requests.
 func (h *Host) Restore(ctx context.Context) error {
 	payloads, err := h.repository.ActiveMatches(ctx)
 	if err != nil {
@@ -146,8 +146,13 @@ func (h *Host) Restore(ctx context.Context) error {
 				}
 			}
 		}
-		h.matches[match.Code] = &match
-		h.updateRoomDeadline(&match)
+		h.mu.Lock()
+		h.rooms[match.Code] = newRoom(&match)
+		if activeMatch(&match) {
+			h.active++
+		}
+		h.updateListing(&match)
+		h.mu.Unlock()
 	}
 	return nil
 }
@@ -232,24 +237,10 @@ func (h *Host) Create(ctx context.Context, user store.User, config rules.Config,
 		return "", err
 	}
 	options.CPUSeats = append([]int(nil), options.CPUSeats...)
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	active := 0
-	for _, match := range h.matches {
-		if match.State == nil || match.State.Phase != rules.MatchOver {
-			active++
-		}
-	}
-	if active >= 1000 {
-		return "", fmt.Errorf("no hay espacio para más mesas en este momento")
-	}
 	for range 10 {
 		generated, err := matchCode()
 		if err != nil {
 			return "", err
-		}
-		if h.matches[generated] != nil {
-			continue
 		}
 		match := &Match{
 			CreatorID:    user.ID,
@@ -276,14 +267,36 @@ func (h *Host) Create(ctx context.Context, user store.User, config rules.Config,
 				return "", err
 			}
 		}
-		if err := h.persist(ctx, match, true); errors.Is(err, store.ErrMatchCodeInUse) {
+		// Reserve capacity and the code before I/O, without exposing an
+		// unpersisted room to joins, listings or timer processing.
+		h.mu.Lock()
+		if h.active+len(h.reservations) >= 1000 {
+			h.mu.Unlock()
+			return "", fmt.Errorf("no hay espacio para más mesas en este momento")
+		}
+		if h.rooms[generated] != nil || h.reservations[generated] {
+			h.mu.Unlock()
 			continue
-		} else if err != nil {
+		}
+		h.reservations[generated] = true
+		h.mu.Unlock()
+
+		err = h.persist(ctx, match, true)
+		h.mu.Lock()
+		delete(h.reservations, generated)
+		if err == nil {
+			h.rooms[generated] = newRoom(match)
+			h.active++
+			h.updateListing(match)
+			h.notifyListings()
+		}
+		h.mu.Unlock()
+		if errors.Is(err, store.ErrMatchCodeInUse) {
+			continue
+		}
+		if err != nil {
 			return "", err
 		}
-		h.matches[generated] = match
-		h.updateRoomDeadline(match)
-		h.notifyListings()
 		return generated, nil
 	}
 	return "", fmt.Errorf("no pudimos reservar un código de mesa. Inténtalo de nuevo")
@@ -292,12 +305,12 @@ func (h *Host) Create(ctx context.Context, user store.User, config rules.Config,
 // Join claims the requested seat atomically. A nil seat supports older clients
 // by choosing the first vacancy; existing players retain their current seat.
 func (h *Host) Join(ctx context.Context, code string, user store.User, requested *int) error {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	m := h.matches[code]
-	if m == nil {
+	r := h.lockRoom(code)
+	if r == nil {
 		return fmt.Errorf("no encontramos esa mesa")
 	}
+	defer r.mu.Unlock()
+	m := r.match
 	for _, seat := range m.Seats {
 		if seat.ID == user.ID {
 			return nil
@@ -333,7 +346,7 @@ func (h *Host) Join(ctx context.Context, code string, user store.User, requested
 		return err
 	}
 	next.Sequence++
-	return h.commit(ctx, next)
+	return h.commit(ctx, r, next)
 }
 
 func clone(m *Match) *Match {
@@ -351,26 +364,33 @@ func clone(m *Match) *Match {
 	return &next
 }
 
-func (h *Host) commit(ctx context.Context, next *Match) error {
-	previous := h.matches[next.Code]
+func (h *Host) commit(ctx context.Context, r *room, next *Match) error {
+	previous := r.match
 	next.LastActivity = time.Now()
 	if err := h.save(ctx, next); err != nil {
 		return err
 	}
-	h.matches[next.Code] = next
-	h.updateRoomDeadline(next)
-	h.selectCPUController(next)
-	h.notify(next.Code)
+	r.match = next
+	r.updateRoomDeadline(next)
+	r.selectCPUController(next)
+	r.notify()
 	if previous == nil || occupiedSeats(previous) != occupiedSeats(next) ||
 		(previous.State == nil) != (next.State == nil) ||
 		(next.State != nil && next.State.Phase == rules.MatchOver) {
+		h.mu.Lock()
+		if activeMatch(previous) && !activeMatch(next) {
+			h.active--
+		}
+		h.updateListing(next)
 		h.notifyListings()
+		h.mu.Unlock()
 	}
 	return nil
 }
 
-func (h *Host) notify(code string) {
-	for channel := range h.listeners[code] {
+// Caller holds r.mu. Notifications coalesce without blocking a game.
+func (r *room) notify() {
+	for channel := range r.listeners {
 		select {
 		case channel <- struct{}{}:
 		default:
@@ -391,12 +411,12 @@ func seatOf(m *Match, userID string) int {
 }
 
 func (h *Host) Snapshot(code, userID string, perspective int) (Snapshot, error) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	m := h.matches[code]
-	if m == nil {
+	r := h.lockRoom(code)
+	if r == nil {
 		return Snapshot{}, fmt.Errorf("no encontramos esa mesa")
 	}
+	defer r.mu.Unlock()
+	m := r.match
 	seat := seatOf(m, userID)
 	if seat >= 0 {
 		perspective = seat
@@ -405,8 +425,8 @@ func (h *Host) Snapshot(code, userID string, perspective int) (Snapshot, error) 
 		perspective = 0
 	}
 	v := Snapshot{
-		CPUController: h.controllerSeat(m),
-		CPUPaused:     len(m.Options.CPUSeats) > 0 && m.State != nil && m.State.Phase != rules.MatchOver && h.controllers[code] == "",
+		CPUController: r.controllerSeat(m),
+		CPUPaused:     len(m.Options.CPUSeats) > 0 && m.State != nil && m.State.Phase != rules.MatchOver && r.controller == "",
 		Options:       m.Options,
 		Code:          code,
 		Private:       m.Private,
@@ -447,26 +467,11 @@ type Listing struct {
 }
 
 func (h *Host) List() []Listing {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	list := []Listing{}
-	for _, m := range h.matches {
-		if m.Private || occupiedSeats(m) == 0 || (m.State != nil && m.State.Phase == rules.MatchOver) {
-			continue
-		}
-		list = append(list, Listing{
-			Code:         m.Code,
-			Players:      occupiedSeats(m),
-			CPUPlayers:   len(m.Options.CPUSeats),
-			Capacity:     m.Config.Players,
-			Target:       m.Config.Target,
-			FlorRequired: m.Config.FlorRequired,
-			Started:      m.State != nil,
-			Host:         m.Seats[0].Name,
-		})
-		if list[len(list)-1].Host == "" {
-			list[len(list)-1].Host = m.CreatorName
-		}
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	list := make([]Listing, 0, len(h.listings))
+	for _, listing := range h.listings {
+		list = append(list, listing)
 	}
 	return list
 }
@@ -490,24 +495,24 @@ func (h *Host) HandleFromConnection(ctx context.Context, code string, user store
 	if input.ID == "" || len(input.ID) > 80 {
 		return fmt.Errorf("identificador de acción inválido")
 	}
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	m := h.matches[code]
-	if m == nil {
+	r := h.lockRoom(code)
+	if r == nil {
 		return fmt.Errorf("no encontramos esa mesa")
 	}
+	defer r.mu.Unlock()
+	m := r.match
 	seat := seatOf(m, user.ID)
 	if input.CPUSeat != nil {
 		cpuSeat := *input.CPUSeat
-		connection := h.connections[code][connectionID]
-		if connectionID == "" || h.controllers[code] != connectionID || connection.userID != user.ID ||
+		connection := r.connections[connectionID]
+		if connectionID == "" || r.controller != connectionID || connection.userID != user.ID ||
 			cpuSeat < 0 || cpuSeat >= len(m.Seats) || !m.Seats[cpuSeat].CPU ||
 			input.Chat != "" || input.Signal != "" || input.Command.Type == "leave" {
 			return fmt.Errorf("no tienes el control de ese jugador CPU")
 		}
 		seat = cpuSeat
 	}
-	if len(m.Options.CPUSeats) > 0 && h.controllers[code] == "" && input.Chat == "" && input.Signal == "" && input.Command.Type != "leave" {
+	if len(m.Options.CPUSeats) > 0 && r.controller == "" && input.Chat == "" && input.Signal == "" && input.Command.Type != "leave" {
 		return fmt.Errorf("esperando a un jugador para continuar con la CPU")
 	}
 	key := user.ID + ":" + input.ID
@@ -515,10 +520,10 @@ func (h *Host) HandleFromConnection(ctx context.Context, code string, user store
 		return nil
 	}
 	if input.Chat == "" && input.Signal == "" && m.State != nil && !m.Deadline.IsZero() && !time.Now().Before(m.Deadline) {
-		if err := h.expire(ctx, m); err != nil {
+		if err := h.expire(ctx, r, m); err != nil {
 			return err
 		}
-		m = h.matches[code]
+		m = r.match
 	}
 	next := clone(m)
 	switch {
@@ -563,8 +568,8 @@ func (h *Host) HandleFromConnection(ctx context.Context, code string, user store
 				return fmt.Errorf("esperando a los demás jugadores")
 			}
 			next.Seats[seat] = Seat{}
-			if !h.hasConnectedPlayer(next) {
-				return h.closeVacantRoom(ctx, next)
+			if !r.hasConnectedPlayer(next) {
+				return h.closeVacantRoom(ctx, r, next)
 			}
 		} else {
 			if input.Revision != m.State.Revision {
@@ -595,7 +600,7 @@ func (h *Host) HandleFromConnection(ctx context.Context, code string, user store
 			delete(next.Recent, id)
 		}
 	}
-	return h.commit(ctx, next)
+	return h.commit(ctx, r, next)
 }
 
 func validSignal(signal string) bool {
@@ -633,55 +638,70 @@ func isCanto(event rules.Event) bool {
 }
 
 func (h *Host) Subscribe(code string) (<-chan struct{}, func()) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
 	channel := make(chan struct{}, 1)
-	if h.listeners[code] == nil {
-		h.listeners[code] = map[chan struct{}]bool{}
+	r := h.lockRoom(code)
+	if r == nil {
+		channel <- struct{}{}
+		return channel, func() {}
 	}
-	h.listeners[code][channel] = true
+	r.listeners[channel] = true
+	r.mu.Unlock()
 	return channel, func() {
-		h.mu.Lock()
-		defer h.mu.Unlock()
-		delete(h.listeners[code], channel)
-		if len(h.listeners[code]) == 0 {
-			delete(h.listeners, code)
-		}
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		delete(r.listeners, channel)
 	}
 }
 
 func (h *Host) Run(ctx context.Context) {
 	ticker := time.NewTicker(250 * time.Millisecond)
 	defer ticker.Stop()
+	var workers sync.WaitGroup
+	defer workers.Wait()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case now := <-ticker.C:
-			h.mu.Lock()
-			for _, m := range h.matches {
-				if deadline, waiting := h.roomDeadlines[m.Code]; waiting && !now.Before(deadline) {
-					if err := h.closeVacantRoom(ctx, m); err != nil {
-						h.log.Error("close vacant room", "code", m.Code, "error", err)
-					}
-					continue
-				}
-				if len(m.Options.CPUSeats) > 0 && h.controllers[m.Code] == "" {
-					continue
-				}
-				if m.State == nil || m.Deadline.IsZero() || now.Before(m.Deadline) {
-					continue
-				}
-				if err := h.expire(ctx, m); err != nil && !errors.Is(err, context.Canceled) {
-					h.log.Error("match timeout failed", "code", m.Code, "error", err)
-				}
+			h.mu.RLock()
+			rooms := make([]*room, 0, len(h.rooms))
+			for _, r := range h.rooms {
+				rooms = append(rooms, r)
 			}
-			h.mu.Unlock()
+			h.mu.RUnlock()
+			for _, r := range rooms {
+				// Busy rooms are retried next tick. Due rooms retain their
+				// lock in the worker, bounding timer work to one per room.
+				if !r.mu.TryLock() {
+					continue
+				}
+				m := r.match
+				vacant := m != nil && !r.deadline.IsZero() && !now.Before(r.deadline)
+				timedOut := m != nil && m.State != nil && !m.Deadline.IsZero() && !now.Before(m.Deadline) &&
+					(len(m.Options.CPUSeats) == 0 || r.controller != "")
+				if !vacant && !timedOut {
+					r.mu.Unlock()
+					continue
+				}
+				workers.Go(func() {
+					defer r.mu.Unlock()
+					if ctx.Err() != nil {
+						return
+					}
+					if vacant {
+						if err := h.closeVacantRoom(ctx, r, m); err != nil {
+							h.log.Error("close vacant room", "code", m.Code, "error", err)
+						}
+					} else if err := h.expire(ctx, r, m); err != nil && !errors.Is(err, context.Canceled) {
+						h.log.Error("match timeout failed", "code", m.Code, "error", err)
+					}
+				})
+			}
 		}
 	}
 }
 
-func (h *Host) expire(ctx context.Context, m *Match) error {
+func (h *Host) expire(ctx context.Context, r *room, m *Match) error {
 	next := clone(m)
 	var state rules.State
 	var events []rules.Event
@@ -720,5 +740,5 @@ func (h *Host) expire(ctx context.Context, m *Match) error {
 	if state.Phase == rules.MatchOver {
 		next.Deadline = time.Time{}
 	}
-	return h.commit(ctx, next)
+	return h.commit(ctx, r, next)
 }

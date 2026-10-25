@@ -67,49 +67,41 @@ func startWhenFull(match *Match) error {
 // ConnectPlayer tracks game sockets independently of voice sockets and watchers.
 // Only one connected human tab runs CPU decisions, even with several tabs open.
 func (h *Host) ConnectPlayer(code, userID, connectionID string) func() {
-	h.mu.Lock()
-	match := h.matches[code]
-	if match == nil {
-		h.mu.Unlock()
+	r := h.lockRoom(code)
+	if r == nil {
 		return func() {}
 	}
-	if h.connections[code] == nil {
-		h.connections[code] = make(map[string]playerConnection)
-	}
-	h.connectionOrder++
-	h.connections[code][connectionID] = playerConnection{userID: userID, order: h.connectionOrder}
-	h.updateRoomDeadline(match)
-	h.selectCPUController(match)
-	h.notify(code)
-	h.mu.Unlock()
+	r.connectionOrder++
+	r.connections[connectionID] = playerConnection{userID: userID, order: r.connectionOrder}
+	r.updateRoomDeadline(r.match)
+	r.selectCPUController(r.match)
+	r.notify()
+	r.mu.Unlock()
 	return func() {
-		h.mu.Lock()
-		defer h.mu.Unlock()
-		delete(h.connections[code], connectionID)
-		if len(h.connections[code]) == 0 {
-			delete(h.connections, code)
-		}
-		if match := h.matches[code]; match != nil {
-			h.updateRoomDeadline(match)
-			h.selectCPUController(match)
-			h.notify(code)
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		delete(r.connections, connectionID)
+		if r.match != nil {
+			r.updateRoomDeadline(r.match)
+			r.selectCPUController(r.match)
+			r.notify()
 		}
 	}
 }
 
-// Caller holds h.mu. Keep the current controller while connected; otherwise
+// Caller holds r.mu. Keep the current controller while connected; otherwise
 // prefer the creator, then the oldest remaining human connection.
-func (h *Host) selectCPUController(match *Match) {
+func (r *room) selectCPUController(match *Match) {
 	if len(match.Options.CPUSeats) == 0 || (match.State != nil && match.State.Phase == rules.MatchOver) {
-		delete(h.controllers, match.Code)
+		r.controller = ""
 		return
 	}
 	eligible := func(connection playerConnection) bool {
 		seat := seatOf(match, connection.userID)
 		return seat >= 0 && !match.Seats[seat].CPU
 	}
-	previous := h.controllers[match.Code]
-	room := h.connections[match.Code]
+	previous := r.controller
+	room := r.connections
 	if current, ok := room[previous]; ok && eligible(current) {
 		return
 	}
@@ -126,9 +118,9 @@ func (h *Host) selectCPUController(match *Match) {
 		}
 	}
 	if chosenID == "" {
-		delete(h.controllers, match.Code)
+		r.controller = ""
 	} else {
-		h.controllers[match.Code] = chosenID
+		r.controller = chosenID
 		// A returning human gets a full turn after an unattended CPU room.
 		if previous == "" && match.State != nil && match.State.Phase != rules.MatchOver {
 			duration := 30 * time.Second
@@ -140,12 +132,12 @@ func (h *Host) selectCPUController(match *Match) {
 	}
 }
 
-func (h *Host) controllerSeat(match *Match) int {
-	id := h.controllers[match.Code]
+func (r *room) controllerSeat(match *Match) int {
+	id := r.controller
 	if id == "" {
 		return -1
 	}
-	return seatOf(match, h.connections[match.Code][id].userID)
+	return seatOf(match, r.connections[id].userID)
 }
 
 // A human teammate owns pending canto decisions, including counter-cantos.
@@ -167,11 +159,14 @@ func cpuDefersCanto(match *Match, seat int) bool {
 }
 
 func (h *Host) CPUWork(code, userID, connectionID string) CPUWork {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	match := h.matches[code]
-	connection := h.connections[code][connectionID]
-	if match == nil || connectionID == "" || h.controllers[code] != connectionID || connection.userID != userID {
+	r := h.lockRoom(code)
+	if r == nil {
+		return CPUWork{}
+	}
+	defer r.mu.Unlock()
+	match := r.match
+	connection := r.connections[connectionID]
+	if connectionID == "" || r.controller != connectionID || connection.userID != userID {
 		return CPUWork{}
 	}
 	work := CPUWork{Version: cpu.ProtocolVersion, Controlled: true, Seat: -1}

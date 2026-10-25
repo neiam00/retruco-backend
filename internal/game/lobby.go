@@ -10,8 +10,8 @@ import (
 
 const roomReconnectGrace = 10 * time.Second
 
-func (h *Host) hasConnectedPlayer(match *Match) bool {
-	for _, connection := range h.connections[match.Code] {
+func (r *room) hasConnectedPlayer(match *Match) bool {
+	for _, connection := range r.connections {
 		seat := seatOf(match, connection.userID)
 		if seat >= 0 && !match.Seats[seat].CPU {
 			return true
@@ -20,22 +20,22 @@ func (h *Host) hasConnectedPlayer(match *Match) bool {
 	return false
 }
 
-// Caller holds h.mu. Only seated humans keep a room alive. A second
+// Caller holds r.mu. Only seated humans keep a room alive. A second
 // browser tab counts as a live connection; spectators and CPU seats do not.
-func (h *Host) updateRoomDeadline(match *Match) {
-	if h.hasConnectedPlayer(match) {
-		delete(h.roomDeadlines, match.Code)
+func (r *room) updateRoomDeadline(match *Match) {
+	if r.hasConnectedPlayer(match) {
+		r.deadline = time.Time{}
 		return
 	}
-	if _, waiting := h.roomDeadlines[match.Code]; !waiting {
-		h.roomDeadlines[match.Code] = time.Now().Add(roomReconnectGrace)
+	if r.deadline.IsZero() {
+		r.deadline = time.Now().Add(roomReconnectGrace)
 	}
 }
 
-// Caller holds h.mu. Persist closure before removing access in memory so a
+// Caller holds r.mu. Persist closure before removing access in memory so a
 // successful removal cannot reappear when the server restarts. Started games
 // remain in account history as abandoned, without awarding either team a win.
-func (h *Host) closeVacantRoom(ctx context.Context, match *Match) error {
+func (h *Host) closeVacantRoom(ctx context.Context, r *room, match *Match) error {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	if match.State == nil {
@@ -51,12 +51,19 @@ func (h *Host) closeVacantRoom(ctx context.Context, match *Match) error {
 			return err
 		}
 	}
-	delete(h.matches, match.Code)
-	delete(h.roomDeadlines, match.Code)
-	delete(h.controllers, match.Code)
-	delete(h.connections, match.Code)
-	h.notify(match.Code)
+	h.mu.Lock()
+	delete(h.rooms, match.Code)
+	delete(h.listings, match.Code)
+	if activeMatch(r.match) {
+		h.active--
+	}
 	h.notifyListings()
+	h.mu.Unlock()
+	r.match = nil
+	r.deadline = time.Time{}
+	r.controller = ""
+	clear(r.connections)
+	r.notify()
 	return nil
 }
 

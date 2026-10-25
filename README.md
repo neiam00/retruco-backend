@@ -100,6 +100,13 @@ to that process; PostgreSQL supplies durability across restarts. Redis would not
 solve cross-instance ownership by itself and is unnecessary for this P0 topology.
 Do not scale replicas until match routing and distributed ownership are designed.
 
+Each room serializes its own actions, persistence, connections and subscriptions.
+A slow write blocks only that room; the shared registry lock covers short
+in-memory updates, and the lobby reads cached committed listings. Due timers run
+independently per room, with at most one timer operation per room and shutdown
+waiting for outstanding timer work. Concurrent room creation reserves capacity
+before persistence, so the 1,000-active-table limit includes pending creations.
+
 Unstarted tables are deleted when their last connected human leaves explicitly. When all
 seated humans disconnect, there is a 10-second grace period for a page refresh
 or brief connection loss. Another connected tab keeps the room alive;
