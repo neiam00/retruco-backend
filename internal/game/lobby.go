@@ -9,6 +9,7 @@ import (
 )
 
 const roomReconnectGrace = 10 * time.Second
+const restoreReconnectGrace = 2 * time.Minute
 
 func (r *room) hasConnectedPlayer(match *Match) bool {
 	for _, connection := range r.connections {

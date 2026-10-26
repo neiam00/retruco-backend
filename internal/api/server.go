@@ -104,7 +104,7 @@ func (s *Server) Handler() http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID, middleware.Recoverer, s.security)
 	r.Get("/api/health", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, 200, map[string]string{"status": "ok", "rulesVersion": rules.Version})
+		writeJSON(w, 200, map[string]any{"status": "ok", "rulesVersion": rules.Version, "deploymentNotices": true})
 	})
 	r.Get("/api/session", s.session)
 	r.Post("/api/guest", s.guest)
@@ -122,7 +122,10 @@ func (s *Server) Handler() http.Handler {
 	r.Post("/api/matches/{code}/join", s.joinMatch)
 	r.Get("/api/matches/{code}/ws", s.socket)
 	r.Get("/api/matches/{code}/voice", s.voiceSocket)
-	return r
+	mux := http.NewServeMux()
+	mux.HandleFunc("/internal/deployment", s.deployment)
+	mux.Handle("/", r)
+	return mux
 }
 
 func (s *Server) allowedOrigin(origin string) bool {

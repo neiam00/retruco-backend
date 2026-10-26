@@ -73,6 +73,10 @@ func (h *Host) ConnectPlayer(code, userID, connectionID string) func() {
 	}
 	r.connectionOrder++
 	r.connections[connectionID] = playerConnection{userID: userID, order: r.connectionOrder}
+	if r.recovering && r.hasConnectedPlayer(r.match) {
+		r.recovering = false
+		renewDeadline(r.match)
+	}
 	r.updateRoomDeadline(r.match)
 	r.selectCPUController(r.match)
 	r.notify()
@@ -164,6 +168,9 @@ func (h *Host) CPUWork(code, userID, connectionID string) CPUWork {
 		return CPUWork{}
 	}
 	defer r.mu.Unlock()
+	if h.Updating() {
+		return CPUWork{}
+	}
 	match := r.match
 	connection := r.connections[connectionID]
 	if connectionID == "" || r.controller != connectionID || connection.userID != userID {

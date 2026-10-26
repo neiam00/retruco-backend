@@ -10,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/neiam00/retruco-backend/internal/game"
@@ -219,42 +220,49 @@ func TestConcurrentRoomActionsPreserveEveryUniqueCommand(t *testing.T) {
 }
 
 func TestRoomTimersProgressIndependentlyAndStopOnCancellation(t *testing.T) {
-	r := newGatedRepository(t)
-	config := rules.Config{Players: 2, Target: 12}
-	for i, code := range []string{"SLOW-0000", "FAST-0000"} {
-		state, err := rules.New(config, 0, rules.Deck())
-		require.NoError(t, err)
-		match := game.Match{
-			Code: code, Config: config, State: &state, Sequence: 1,
-			Seats: []game.Seat{{ID: "owner"}, {ID: "guest"}},
-			// The second deadline occurs after the first write is blocked.
-			Deadline: time.Now().Add(time.Duration(i) * time.Second),
+	synctest.Test(t, func(t *testing.T) {
+		r := newGatedRepository(t)
+		config := rules.Config{Players: 2, Target: 12}
+		for _, code := range []string{"SLOW-0000", "FAST-0000"} {
+			state, err := rules.New(config, 0, rules.Deck())
+			require.NoError(t, err)
+			match := game.Match{
+				Code: code, Config: config, State: &state, Sequence: 1,
+				Seats: []game.Seat{{ID: "owner"}, {ID: "guest"}},
+				// Deployment recovery gives both rooms a fresh turn window.
+				Deadline: time.Now().Add(-time.Minute),
+			}
+			payload, err := json.Marshal(match)
+			require.NoError(t, err)
+			r.payloads[code] = payload
 		}
-		payload, err := json.Marshal(match)
+		host := game.New(r, slog.New(slog.NewTextHandler(io.Discard, nil)))
+		require.NoError(t, host.Restore(t.Context()))
+		for _, code := range []string{"SLOW-0000", "FAST-0000"} {
+			defer host.ConnectPlayer(code, "owner", "returned-tab")()
+		}
+		updates, unsubscribe := host.Subscribe("FAST-0000")
+		defer unsubscribe()
+		r.operation, r.code = "save", "SLOW-0000"
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		stopped := startCall(func() struct{} { host.Run(ctx); return struct{}{} })
+		time.Sleep(30 * time.Second)
+		synctest.Wait()
+		finishCall(t, r.entered)
+		finishCall(t, updates)
+		fast, err := host.Snapshot("FAST-0000", "owner", 0)
 		require.NoError(t, err)
-		r.payloads[code] = payload
-	}
-	host := game.New(r, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	require.NoError(t, host.Restore(t.Context()))
-	updates, unsubscribe := host.Subscribe("FAST-0000")
-	defer unsubscribe()
-	r.operation, r.code = "save", "SLOW-0000"
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	stopped := startCall(func() struct{} { host.Run(ctx); return struct{}{} })
-	finishCall(t, r.entered)
-	finishCall(t, updates)
-	fast, err := host.Snapshot("FAST-0000", "owner", 0)
-	require.NoError(t, err)
-	assert.Equal(t, uint64(2), fast.Sequence)
-	assert.NotEqual(t, rules.Cutting, fast.State.Phase)
+		assert.Equal(t, uint64(2), fast.Sequence)
+		assert.NotEqual(t, rules.Cutting, fast.State.Phase)
 
-	// Cancellation must reach the blocked write and Run must join its workers.
-	cancel()
-	finishCall(t, stopped)
-	slow, err := host.Snapshot("SLOW-0000", "owner", 0)
-	require.NoError(t, err)
-	assert.Equal(t, uint64(1), slow.Sequence, "canceled persistence must not publish a timeout")
+		// Cancellation must reach the blocked write and Run must join its workers.
+		cancel()
+		finishCall(t, stopped)
+		slow, err := host.Snapshot("SLOW-0000", "owner", 0)
+		require.NoError(t, err)
+		assert.Equal(t, uint64(1), slow.Sequence, "canceled persistence must not publish a timeout")
+	})
 }
 
 func TestConcurrentCreationReservesCapacityAndReleasesFailedReservations(t *testing.T) {

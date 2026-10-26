@@ -78,6 +78,7 @@ type Match struct {
 }
 
 type Snapshot struct {
+	Updating      bool         `json:"updating,omitempty"`
 	CPUController int          `json:"cpuController"`
 	CPUPaused     bool         `json:"cpuPaused"`
 	Options       RoomOptions  `json:"options"`
@@ -105,6 +106,8 @@ type Host struct {
 	listings         map[string]Listing
 	reservations     map[string]bool
 	active           int
+	updating         bool
+	deploymentMu     sync.Mutex
 	listingListeners map[chan struct{}]bool
 	repository       Repository
 	log              *slog.Logger
@@ -147,8 +150,16 @@ func (h *Host) Restore(ctx context.Context) error {
 				}
 			}
 		}
+		match.restoreFlorDeclarations()
+		r := newRoom(&match)
+		if match.State != nil && activeMatch(&match) {
+			// Wait for a seated human before restarting any card/canto clock.
+			r.recovering = true
+			match.Deadline = time.Time{}
+			r.deadline = time.Now().Add(restoreReconnectGrace)
+		}
 		h.mu.Lock()
-		h.rooms[match.Code] = newRoom(&match)
+		h.rooms[match.Code] = r
 		if activeMatch(&match) {
 			h.active++
 		}
@@ -378,6 +389,9 @@ func (h *Host) commit(ctx context.Context, r *room, next *Match) error {
 		return err
 	}
 	r.match = next
+	if previous.State != nil && next.State != nil && previous.State.Revision != next.State.Revision {
+		r.recovering = false
+	}
 	r.updateRoomDeadline(next)
 	r.selectCPUController(next)
 	r.notify()
@@ -432,6 +446,7 @@ func (h *Host) Snapshot(code, userID string, perspective int) (Snapshot, error) 
 		perspective = 0
 	}
 	v := Snapshot{
+		Updating:      h.Updating(),
 		CPUController: r.controllerSeat(m),
 		CPUPaused:     len(m.Options.CPUSeats) > 0 && m.State != nil && m.State.Phase != rules.MatchOver && r.controller == "",
 		Options:       m.Options,
@@ -452,6 +467,9 @@ func (h *Host) Snapshot(code, userID string, perspective int) (Snapshot, error) 
 	v.Options.CPUSeats = append([]int(nil), m.Options.CPUSeats...)
 	if m.State != nil {
 		view := rules.ViewFor(*m.State, perspective, seat < 0)
+		if v.Updating {
+			view.Legal = []rules.Command{}
+		}
 		v.State = &view
 	}
 	for _, signal := range m.Signals {
@@ -509,6 +527,9 @@ func (h *Host) HandleFromConnection(ctx context.Context, code string, user store
 	defer r.mu.Unlock()
 	m := r.match
 	seat := seatOf(m, user.ID)
+	if h.Updating() && input.Chat == "" && input.Signal == "" && input.Command.Type != "leave" {
+		return fmt.Errorf("la partida está en pausa mientras actualizamos el juego")
+	}
 	if input.CPUSeat != nil {
 		cpuSeat := *input.CPUSeat
 		connection := r.connections[connectionID]
@@ -526,7 +547,7 @@ func (h *Host) HandleFromConnection(ctx context.Context, code string, user store
 	if _, exists := m.Recent[key]; exists {
 		return nil
 	}
-	if input.Chat == "" && input.Signal == "" && m.State != nil && !m.Deadline.IsZero() && !time.Now().Before(m.Deadline) {
+	if !h.Updating() && input.Chat == "" && input.Signal == "" && m.State != nil && !m.Deadline.IsZero() && !time.Now().Before(m.Deadline) {
 		if err := h.expire(ctx, r, m); err != nil {
 			return err
 		}
@@ -670,6 +691,9 @@ func (h *Host) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case now := <-ticker.C:
+			if h.Updating() {
+				continue
+			}
 			h.mu.RLock()
 			rooms := make([]*room, 0, len(h.rooms))
 			for _, r := range h.rooms {
@@ -692,7 +716,7 @@ func (h *Host) Run(ctx context.Context) {
 				}
 				workers.Go(func() {
 					defer r.mu.Unlock()
-					if ctx.Err() != nil {
+					if ctx.Err() != nil || h.Updating() {
 						return
 					}
 					if vacant {

@@ -29,7 +29,7 @@ func (s *State) play(seat int, command Command, timeout bool) error {
 		return fmt.Errorf("invalid pegado")
 	}
 	if !timeout || s.Round == 0 {
-		s.declareCards(seat, command.Declaration, stack)
+		s.declareCards(seat, command.Declaration)
 	}
 	burned := voluntaryBurn || timeout && s.Round > 0
 	p.Used[command.Card] = true
@@ -47,7 +47,7 @@ func (s *State) play(seat int, command Command, timeout bool) error {
 	return nil
 }
 
-func (s *State) declareCards(seat int, declaration string, stack bool) {
+func (s *State) declareCards(seat int, declaration string) {
 	p := &s.Players[seat]
 	if declaration == "a_ley" && !p.FirstPlayed {
 		s.Ley = true
@@ -56,17 +56,12 @@ func (s *State) declareCards(seat int, declaration string, stack bool) {
 		return
 	}
 	if !s.Config.FlorRequired {
-		if declaration != "" {
+		if declaresFlor(declaration) {
 			p.FlorDeclared = true
 		}
 		return
 	}
-	valid := declaration == "flor"
-	if stack {
-		valid = declaration == "flor_flor"
-	} else if len(s.Remaining(seat)) == 1 {
-		valid = declaration == "presento_flor"
-	}
+	valid := declaresFlor(declaration)
 	if !p.FirstPlayed && declaration == "a_ley" {
 		valid = true
 		s.DoubleFlor[s.Team(seat)] = true
@@ -75,9 +70,9 @@ func (s *State) declareCards(seat int, declaration string, stack bool) {
 		p.FlorValid = false
 		return
 	}
-	p.FlorDeclared = true
+	p.FlorDeclared = p.FlorDeclared || declaresFlor(declaration)
 	team := s.Team(seat)
-	if !p.FirstPlayed && declaration == "flor" && !s.DoubleFlor[team] {
+	if !p.FirstPlayed && declaration != "a_ley" && !s.DoubleFlor[team] {
 		if s.FlorClaimant[team] >= 0 && s.FlorClaimant[team] != seat {
 			p.FlorValid = false
 		} else {

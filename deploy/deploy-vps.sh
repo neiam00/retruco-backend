@@ -29,6 +29,18 @@ stage="$(mktemp -d "$parent_dir/.deploy-source.XXXXXX")"
 api_stopped=0
 migration_started=0
 deployment_complete=0
+notice_sent=0
+
+notify_update() {
+  "$compose" exec -T api sh -c '
+    health=$(wget -q -T 10 -O - --header="X-Retruco-Proxy-Secret: $API_PROXY_SECRET" http://127.0.0.1:8080/api/health) || exit 1
+    case "$health" in *\"deploymentNotices\":true*) ;; *) exit 44 ;; esac
+    wget -q -T 10 -O /dev/null --header="X-Retruco-Proxy-Secret: $API_PROXY_SECRET" \
+      --header="Content-Type: application/json" --post-data="$1" \
+      http://127.0.0.1:8080/internal/deployment
+  ' sh "{\"updating\":$1}" < /dev/null
+}
+
 cleanup() {
   status=$?
   trap - EXIT
@@ -37,6 +49,9 @@ cleanup() {
     status=1
   fi
   if (( status != 0 )); then
+    if (( notice_sent == 1 && api_stopped == 0 && migration_started == 0 )); then
+      notify_update false || true
+    fi
     if (( api_stopped == 1 && migration_started == 0 )); then
       # The schema is unchanged: restart the existing container, without recreating it.
       "$compose" up -d --no-build --no-deps --no-recreate api || true
@@ -79,6 +94,20 @@ backup_dir="$parent_dir/backups"
 mkdir -p "$backup_dir"
 chmod 700 "$backup_dir"
 backup="$backup_dir/retruco-$(date -u +%Y%m%dT%H%M%SZ)-${revision:0:12}-$$.dump"
+notice_sent=1
+notice_status=0
+notify_update true || notice_status=$?
+if (( notice_status == 44 )); then
+  # The first rollout installs this capability in the running backend.
+  notice_sent=0
+  echo "The running API predates update notices; bootstrapping this deployment."
+elif (( notice_status != 0 )); then
+  echo "Could not notify players; keeping the current API running." >&2
+  exit 1
+else
+  echo "Players notified. Pausing for 10 seconds before restarting the API."
+  sleep 10
+fi
 "$compose" stop api
 api_stopped=1
 # Stop writes before taking the recovery snapshot and applying migrations.

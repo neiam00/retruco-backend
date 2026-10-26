@@ -94,11 +94,14 @@ the matching `API_PROXY_SECRET`.
    source files. Preserves `.env*`, `.git`, `.agents`, `.agent`, `compose.vps.yaml`,
    `deploy/nginx.vps.conf.template`, `.deployed-revision`, `bin`, and `coverage.out`.
 4. Builds the API and migration images while the old API keeps running.
-5. Stops the API, saves a PostgreSQL backup under `/opt/retruco/backups`, and
+5. Announces the update to all open games and pauses play for 10 seconds. The
+   notice says the match is saved and reconnection will happen automatically.
+   Turn and vacant-room timers are paused as well.
+6. Stops the API, saves a PostgreSQL backup under `/opt/retruco/backups`, and
    applies migrations. This creates a maintenance window and disconnects games.
-6. Starts the new API, checks it locally using the existing proxy secret,
+7. Starts the new API, checks it locally using the existing proxy secret,
    updates TURN if configured, and recreates NGINX.
-7. Checks `https://retru.co.ve/api/health` with a unique deployment query to avoid
+8. Checks `https://retru.co.ve/api/health` with a unique deployment query to avoid
    cached responses, and records the deployed SHA in
    `/opt/retruco/backend/.deployed-revision`. The workflow independently verifies
    that marker. An early script exit cannot be reported as a successful deployment.
@@ -107,6 +110,35 @@ Treat the backend directory as managed application source. Put other server-only
 files outside it unless they are explicitly protected above. The synchronization
 does not delete database volumes, certificates, the helper, or the backup directory.
 Copy backups off the VPS and manage their retention; deployment does not prune them.
+
+Active games resume from the last committed PostgreSQL snapshot after the API
+restarts. Restored active matches wait up to two minutes for a seated human to
+reconnect, with their game clocks paused. Card/canto turns then receive a fresh
+30-second deadline, and the pause between hands receives 5 seconds.
+Cards, scores, pending/suspended cantos, revisions, and command deduplication IDs
+survive; retrying a committed command does not play it twice, and a different
+command with a stale revision is rejected. Ordinary disconnects and restored
+waiting lobbies retain their existing 10-second reconnect grace.
+
+The browser keeps the update notice visible while the API is unavailable and
+automatically reconnects every two seconds. A successful snapshot from the new
+API clears the notice and resumes the game. The script uses the container-local
+`/internal/deployment` endpoint with the existing proxy secret; requests from
+outside the container loopback interface are denied. Failure to send a supported
+notice aborts before stopping the API. A cancelled pre-stop notice is cleared
+and play resumes. The first deployment to an API predating `deploymentNotices`
+support bootstraps without an announcement; subsequent deployments can notify
+players. The frontend displaying notices must also have been deployed and loaded
+in the player's browser.
+
+Compatible browsers reconnect automatically and use the new server's legal
+actions, including browser CPU workers. They do not keep running the previous
+server's rules. The current frontend accepts rules-view versions 1 and 2; an
+unsupported rules-view version stops automatic retries and offers an explicit
+page reload. Already-open older bundles keep their own version-check behavior
+until refreshed. Serve a compatible frontend before introducing a new protocol
+version, and preserve snapshot/schema compatibility or supply a migration.
+These recovery checks do not make arbitrary breaking releases compatible.
 
 Deployments are serialized and an active deployment is not cancelled by a new push.
 GitHub may replace an older queued run with a newer push. A server-side lock also
@@ -138,7 +170,7 @@ After adding secrets, commit and push the workflow, script, and tests to `master
 Watch the first run under **Actions**. No secrets have been configured, workflow
 pushed, or live deployment executed as part of creating these files.
 
-Local validation passed: Actions syntax (`actionlint`), shell syntax, six deployment
+Local validation passed: Actions syntax (`actionlint`), shell syntax, ten deployment
 tests, `go test ./...`, and `go vet ./...`. The deployment tests use real file
 synchronization with simulated external services. The Docker-based CI step was
 not run locally because the local Docker socket was inaccessible; the first

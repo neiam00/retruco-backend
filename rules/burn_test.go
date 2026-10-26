@@ -107,7 +107,7 @@ func TestVoluntaryBurnDuringMandatoryPegadoBurnsBothCards(t *testing.T) {
 			s = apply(t, s, 1, command)
 			assert.Empty(t, s.Remaining(1))
 			assert.Equal(t, 0, s.Turn)
-			assert.Equal(t, declaration == "flor_flor", s.Players[1].FlorValid)
+			assert.Equal(t, declaration != "", s.Players[1].FlorValid)
 			s = apply(t, s, 0, rules.Command{Type: "burn"})
 			assert.Equal(t, rules.HandOver, s.Phase)
 			assert.Equal(t, 1, s.HandWinner, "all rounds tied: mano wins")

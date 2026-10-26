@@ -224,7 +224,7 @@ func TestRestoredStartedRoomClosureRetriesStorageFailure(t *testing.T) {
 		defer cancel()
 		repository.unavailable.Store(true)
 		go host.Run(ctx)
-		time.Sleep(11 * time.Second)
+		time.Sleep(121 * time.Second)
 		synctest.Wait()
 		_, err = host.Snapshot(code, owner.ID, 0)
 		require.NoError(t, err, "failed persistence must leave the room available for retry")

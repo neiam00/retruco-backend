@@ -135,12 +135,12 @@ func TestLeyScoresBeforeFlorAndEndsMatch(t *testing.T) {
 	assert.Equal(t, []rules.Payout{{Kind: "envido", Team: 0, Points: 2}}, s.Payouts)
 }
 
-func TestOrdinaryEnvidoBurnsCallerAndOpposingFlorBlocks(t *testing.T) {
+func TestOrdinaryEnvidoWithFlorWordingPreservesCallerAndOpposingFlorBlocks(t *testing.T) {
 	s := fixture(t, false,
 		[3]rules.Card{{rules.Clubs, 7}, {rules.Clubs, 6}, {rules.Clubs, 5}},
 		[3]rules.Card{{rules.Cups, 7}, {rules.Cups, 6}, {rules.Cups, 5}})
 	s = apply(t, s, 1, rules.Command{Type: "call", Kind: "envido", Declaration: "con_mi_flor"})
-	assert.False(t, s.Players[1].FlorValid)
+	assert.True(t, s.Players[1].FlorValid)
 	s = apply(t, s, 0, rules.Command{Type: "respond", Kind: "flowers_no"})
 	assert.True(t, s.EnvidoCanceled)
 	assert.True(t, s.Players[0].FlorValid)
@@ -209,14 +209,14 @@ func TestVoluntaryPegadoBurnsLosingTopCard(t *testing.T) {
 }
 
 func TestFlorFlorPreservesStackedFlor(t *testing.T) {
-	for _, declaration := range []string{"flor_flor", "presento_flor", ""} {
+	for _, declaration := range []string{"flor_flor", "presento_flor", "flor", "con_mi_flor", ""} {
 		s := fixture(t, true,
 			[3]rules.Card{{rules.Clubs, 3}, {rules.Cups, 4}, {rules.Spades, 1}},
 			[3]rules.Card{{rules.Coins, 3}, {rules.Coins, 7}, {rules.Coins, 6}})
 		s = apply(t, s, 1, rules.Command{Type: "play", Card: 0, Declaration: "flor"})
 		s = apply(t, s, 0, rules.Command{Type: "play", Card: 0})
 		s = apply(t, s, 1, rules.Command{Type: "stack", Card: 1, Top: 2, Declaration: declaration})
-		assert.Equal(t, declaration == "flor_flor", s.Players[1].FlorValid)
+		assert.Equal(t, declaration != "", s.Players[1].FlorValid)
 	}
 }
 

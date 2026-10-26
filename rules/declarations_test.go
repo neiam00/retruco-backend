@@ -47,9 +47,133 @@ func TestALeyIsOnlyAvailableInTheFirstRound(t *testing.T) {
 	assert.Equal(t, rules.HandOver, state.Phase)
 }
 
-func TestLeyEnvidoRejectsFlorPrefix(t *testing.T) {
-	state := simple(t)
-	for _, declaration := range []string{"con_mi_flor", "con_flor"} {
-		assertRejectedCanto(t, state, state.Turn, rules.Command{Type: "call", Kind: "ley_envido", Declaration: declaration})
+func TestFlorWordingPreservesFlorOnEveryCard(t *testing.T) {
+	for _, declaration := range []string{"flor", "presento_flor", "flor_flor", "con_mi_flor", "con_flor", ""} {
+		t.Run("declaration="+declaration, func(t *testing.T) {
+			s := fixture(t, true,
+				[3]rules.Card{{rules.Clubs, 1}, {rules.Clubs, 5}, {rules.Cups, 4}},
+				[3]rules.Card{{rules.Coins, 3}, {rules.Coins, 7}, {rules.Coins, 6}},
+			)
+			for round := range 3 {
+				for range 2 {
+					seat := s.Turn
+					wording := ""
+					if seat == 1 {
+						wording = declaration
+					}
+					s = apply(t, s, seat, rules.Command{Type: "play", Card: round, Declaration: wording})
+				}
+			}
+			assert.Equal(t, rules.HandOver, s.Phase)
+			assert.Equal(t, declaration != "", s.Players[1].FlorValid)
+			want := 4
+			if declaration == "" {
+				want = 1
+			}
+			assert.Equal(t, want, s.Scores[1], "the final Flor must still pay three flor points")
+		})
+	}
+}
+
+func TestFlorCantosPreserveFlorExceptExplicitForfeitures(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		pending string
+		command rules.Command
+		valid   bool
+	}{
+		{name: "truco call", command: rules.Command{Type: "call", Kind: "truco", Amount: 3}, valid: true},
+		{name: "ordinary envido call", command: rules.Command{Type: "call", Kind: "envido"}, valid: true},
+		{name: "ordinary sin ley call", command: rules.Command{Type: "call", Kind: "envido", Mode: "sin_ley"}},
+		{name: "accept truco", pending: "truco", command: rules.Command{Type: "respond", Kind: "accept"}, valid: true},
+		{name: "raise truco", pending: "truco", command: rules.Command{Type: "respond", Kind: "raise", Amount: 6}, valid: true},
+		{name: "decline truco", pending: "truco", command: rules.Command{Type: "respond", Kind: "decline"}, valid: true},
+		{name: "decline envido", pending: "envido", command: rules.Command{Type: "respond", Kind: "decline"}, valid: true},
+		{name: "decline ley envido", pending: "ley_envido", command: rules.Command{Type: "respond", Kind: "decline"}, valid: true},
+		{name: "accept con ley", pending: "ley_envido", command: rules.Command{Type: "respond", Kind: "accept", Mode: "con_ley"}, valid: true},
+		{name: "raise con ley", pending: "ley_envido", command: rules.Command{Type: "respond", Kind: "raise", Amount: 2, Mode: "con_ley"}, valid: true},
+		{name: "falta con ley", pending: "ley_envido", command: rules.Command{Type: "respond", Kind: "falta", Mode: "con_ley"}, valid: true},
+		{name: "accept sin ley", pending: "ley_envido", command: rules.Command{Type: "respond", Kind: "accept", Mode: "sin_ley"}},
+		{name: "raise sin ley", pending: "ley_envido", command: rules.Command{Type: "respond", Kind: "raise", Amount: 2, Mode: "sin_ley"}},
+		{name: "decline envido sin ley", pending: "envido", command: rules.Command{Type: "respond", Kind: "decline", Mode: "sin_ley"}},
+		{name: "decline ley sin ley", pending: "ley_envido", command: rules.Command{Type: "respond", Kind: "decline", Mode: "sin_ley"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, declaration := range []string{"flor", "presento_flor", "flor_flor", "con_mi_flor", "con_flor"} {
+				t.Run(declaration, func(t *testing.T) {
+					s := fixture(t, true,
+						[3]rules.Card{{rules.Clubs, 1}, {rules.Clubs, 5}, {rules.Cups, 4}},
+						[3]rules.Card{{rules.Coins, 3}, {rules.Coins, 7}, {rules.Coins, 6}},
+					)
+					seat := 1
+					if tc.pending != "" {
+						// Start the wager before either player declares flor.
+						s = fixture(t, true,
+							[3]rules.Card{{rules.Coins, 3}, {rules.Coins, 7}, {rules.Coins, 6}},
+							[3]rules.Card{{rules.Clubs, 1}, {rules.Clubs, 5}, {rules.Cups, 4}},
+						)
+						s = apply(t, s, 1, rules.Command{Type: "call", Kind: tc.pending})
+						seat = 0
+					}
+					command := tc.command
+					command.Declaration = declaration
+					if declaration != "con_flor" {
+						require.Contains(t, rules.LegalActions(s, seat), command, "the declaration must also be available to the UI")
+					}
+					s = apply(t, s, seat, command)
+					assert.Equal(t, tc.valid, s.Players[seat].FlorValid)
+					assert.True(t, s.Players[seat].FlorDeclared)
+				})
+			}
+		})
+	}
+}
+
+func TestALeyEnvidoCannotConfirmFlor(t *testing.T) {
+	s := simple(t)
+	for _, declaration := range []string{"flor", "presento_flor", "flor_flor", "con_mi_flor", "con_flor"} {
+		t.Run(declaration, func(t *testing.T) {
+			assertRejectedCanto(t, s, s.Turn, rules.Command{Type: "call", Kind: "ley_envido", Declaration: declaration})
+		})
+	}
+	_, _, err := rules.Apply(s, s.Turn, rules.Command{Type: "call", Kind: "ley_envido"})
+	require.NoError(t, err, "A ley remains legal without announcing flor")
+}
+
+func TestSinLeyCallBurnsOnlyTheSpeakersOrdinaryFlor(t *testing.T) {
+	for _, required := range []bool{false, true} {
+		t.Run(map[bool]string{false: "free flor", true: "required flor"}[required], func(t *testing.T) {
+			s := fixture(t, required,
+				[3]rules.Card{{rules.Clubs, 3}, {rules.Clubs, 6}, {rules.Clubs, 5}},
+				[3]rules.Card{{rules.Cups, 7}, {rules.Cups, 6}, {rules.Cups, 5}},
+				[3]rules.Card{{rules.Coins, 7}, {rules.Coins, 6}, {rules.Coins, 5}},
+				[3]rules.Card{{rules.Spades, 7}, {rules.Spades, 6}, {rules.Spades, 5}},
+			)
+			s = apply(t, s, 1, rules.Command{Type: "play", Card: 0, Declaration: "a_ley"})
+			s = apply(t, s, 2, rules.Command{Type: "call", Kind: "ley_envido", Mode: "sin_ley", Declaration: "con_mi_flor"})
+			assert.False(t, s.Players[2].FlorValid)
+			for _, seat := range []int{0, 1, 3} {
+				assert.True(t, s.Players[seat].FlorValid)
+			}
+		})
+	}
+}
+
+func TestSinLeyDoesNotInvalidateReceta(t *testing.T) {
+	for _, action := range []string{"call", "respond"} {
+		t.Run(action, func(t *testing.T) {
+			s := fixture(t, true,
+				[3]rules.Card{{rules.Clubs, 1}, {rules.Clubs, 5}, {rules.Cups, 4}},
+				[3]rules.Card{{rules.Spades, 11}, {rules.Spades, 10}, {rules.Coins, 7}},
+			)
+			command := rules.Command{Type: "call", Kind: "envido", Mode: "sin_ley", Declaration: "con_mi_flor"}
+			if action == "respond" {
+				s = apply(t, s, 1, rules.Command{Type: "play", Card: 0})
+				s = apply(t, s, 0, rules.Command{Type: "call", Kind: "ley_envido"})
+				command.Type, command.Kind = "respond", "decline"
+			}
+			s = apply(t, s, 1, command)
+			assert.True(t, s.Players[1].FlorValid)
+		})
 	}
 }

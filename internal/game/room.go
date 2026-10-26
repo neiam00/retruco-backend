@@ -19,6 +19,7 @@ type room struct {
 	controller      string
 	connectionOrder uint64
 	deadline        time.Time
+	recovering      bool
 }
 
 func newRoom(match *Match) *room {

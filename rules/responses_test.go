@@ -54,11 +54,18 @@ func TestLeyResponseChoicesExistOnlyUntilTheModeIsChosen(t *testing.T) {
 				if command.Kind == "decline" {
 					declines = append(declines, command.Mode)
 				}
+				if command.Kind == "decline" && (scenario.state.Pending.Kind == "envido" || scenario.state.Pending.Kind == "ley_envido") {
+					continue
+				}
 				if !scenario.chooseLey || command.Kind == "decline" || command.Kind == "flowers_no" {
 					assert.Empty(t, command.Mode, "reply %+v must not offer an irrelevant ley choice", command)
 				}
 			}
-			assert.Equal(t, []string{""}, declines, "refusal never chooses a ley mode")
+			if scenario.state.Pending.Kind == "envido" || scenario.state.Pending.Kind == "ley_envido" {
+				assert.ElementsMatch(t, []string{"", "sin_ley"}, declines, "Sin ley may explicitly forfeit the speaker's flor on refusal")
+			} else {
+				assert.Equal(t, []string{""}, declines)
+			}
 			if scenario.chooseLey {
 				assert.ElementsMatch(t, []string{"con_ley", "sin_ley"}, accepts)
 			} else {

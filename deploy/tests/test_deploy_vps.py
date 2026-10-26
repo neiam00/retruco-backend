@@ -40,6 +40,9 @@ class DeploymentTests(unittest.TestCase):
             """#!/usr/bin/env bash
 set -eu
 printf '%s\\n' "$*" >> "$MOCK_LOG"
+if [[ "$*" == *"/internal/deployment"* ]]; then
+  exec sh -c "$6" "$7" "${@:8}"
+fi
 case "$*" in
   "config --services") printf 'db\\nmigrate\\napi\\nproxy\\n' ;;
   "ps -q db") printf 'database-container\\n' ;;
@@ -55,7 +58,31 @@ esac
 """,
         )
         self.executable(self.bin / "flock", "#!/bin/sh\nexit 0\n")
-        self.executable(self.bin / "sleep", "#!/bin/sh\nexit 0\n")
+        self.executable(self.bin / "sleep", "#!/bin/sh\nprintf 'sleep %s\\n' \"$*\" >> \"$MOCK_LOG\"\n[ \"${MOCK_FAIL:-}\" != notice-wait ]\n")
+        self.executable(
+            self.bin / "wget",
+            """#!/usr/bin/env bash
+set -eu
+case "$*" in
+  *"/api/health"*)
+    if [[ "${MOCK_FAIL:-}" == legacy-notices ]]; then
+      printf '{"status":"ok","rulesVersion":"2"}'
+    else
+      printf '{"status":"ok","deploymentNotices":true,"rulesVersion":"2"}'
+    fi
+    ;;
+  *"/internal/deployment"*)
+    body=""
+    for arg in "$@"; do
+      if [[ "$arg" == --post-data=* ]]; then body="${arg#--post-data=}"; fi
+    done
+    printf 'notice:%s\\n' "$body" >> "$MOCK_LOG"
+    [[ "${MOCK_FAIL:-}" != notice || "$body" != '{"updating":true}' ]] || exit 1
+    ;;
+  *) exit 1 ;;
+esac
+""",
+        )
         self.executable(
             self.bin / "curl",
             """#!/bin/sh
@@ -123,6 +150,10 @@ test "${MOCK_FAIL:-}" != public-health
         backup = self.events.index("exec -T db pg_dump -U retruco -d retruco -Fc")
         migration = self.events.index("run --rm --no-deps migrate")
         self.assertLess(self.events.index("build api migrate"), stop)
+        notice = self.events.index('notice:{"updating":true}')
+        self.assertLess(self.events.index("build api migrate"), notice)
+        self.assertLess(notice, self.events.index("sleep 10"))
+        self.assertLess(self.events.index("sleep 10"), stop)
         self.assertLess(stop, backup)
         self.assertLess(backup, migration)
         self.assertLess(migration, self.events.index("up -d --no-build --no-deps api"))
@@ -134,7 +165,29 @@ test "${MOCK_FAIL:-}" != public-health
         self.assertNotEqual(result.returncode, 0)
         self.assertNotIn("stop api", self.events)
         self.assertNotIn("run --rm --no-deps migrate", self.events)
+        self.assertNotIn('notice:{"updating":true}', self.events)
         self.assert_server_files_preserved()
+
+    def test_notice_failure_keeps_api_running_and_cancels_the_notice(self):
+        result = self.deploy("notice")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("stop api", self.events)
+        self.assertIn('notice:{"updating":false}', self.events)
+        self.assertNotIn("run --rm --no-deps migrate", self.events)
+
+    def test_cancelled_notice_resumes_play_without_stopping_api(self):
+        result = self.deploy("notice-wait")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('notice:{"updating":true}', self.events)
+        self.assertIn('notice:{"updating":false}', self.events)
+        self.assertNotIn("stop api", self.events)
+
+    def test_first_rollout_can_upgrade_an_api_without_notice_support(self):
+        result = self.deploy("legacy-notices")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("bootstrapping", result.stdout)
+        self.assertNotIn("sleep 10", self.events)
+        self.assertIn("stop api", self.events)
 
     def test_streamed_script_finishes_when_backup_reads_stdin(self):
         result = self.deploy(streamed=True)

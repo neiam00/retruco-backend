@@ -16,7 +16,9 @@ func opposingFlores(t *testing.T) rules.State {
 		[3]rules.Card{{rules.Spades, 7}, {rules.Spades, 6}, {rules.Spades, 5}},
 	)
 	s = apply(t, s, 1, rules.Command{Type: "play", Card: 0, Declaration: "a_ley"})
-	return apply(t, s, 2, rules.Command{Type: "call", Kind: "flor"})
+	s = apply(t, s, 2, rules.Command{Type: "play", Card: 0, Declaration: "a_ley"})
+	s = apply(t, s, 3, rules.Command{Type: "play", Card: 0, Declaration: "flor"})
+	return apply(t, s, 0, rules.Command{Type: "call", Kind: "flor"})
 }
 
 func TestLeyEnvidoPreservesCallersFlorWhenTeammateDeclares(t *testing.T) {
@@ -73,17 +75,18 @@ func TestFlorPrefixDeclaresFlorForContestEligibility(t *testing.T) {
 	}
 }
 
-func TestFlorContestRefusalInvalidatesBothTeammates(t *testing.T) {
+func TestFlorContestRefusalInvalidatesOnlyTheSpeaker(t *testing.T) {
 	s := opposingFlores(t)
 	s = apply(t, s, 3, rules.Command{Type: "respond", Kind: "decline", Declaration: "con_mi_flor"})
-	assert.False(t, s.Players[1].FlorValid)
+	assert.True(t, s.Players[1].FlorValid)
 	assert.False(t, s.Players[3].FlorValid)
 	assert.Equal(t, [2]int{}, s.Scores, "refusal still waits for hand settlement")
-	s = apply(t, s, 2, rules.Command{Type: "call", Kind: "truco", Declaration: "con_mi_flor"})
-	s = apply(t, s, 1, rules.Command{Type: "respond", Kind: "decline"})
-	assert.Equal(t, [2]int{8, 0}, s.Scores)
+	s = apply(t, s, s.Turn, rules.Command{Type: "call", Kind: "truco", Declaration: "con_mi_flor"})
+	s = apply(t, s, 1, rules.Command{Type: "respond", Kind: "decline", Declaration: "con_mi_flor"})
+	assert.Equal(t, [2]int{8, 3}, s.Scores)
 	assert.Equal(t, []rules.Payout{
 		{Kind: "flor", Team: 0, Points: 6},
+		{Kind: "flor", Team: 1, Points: 3},
 		{Kind: "envido", Team: 0, Points: 1},
 		{Kind: "truco", Team: 0, Points: 1},
 	}, s.Payouts)
@@ -92,7 +95,7 @@ func TestFlorContestRefusalInvalidatesBothTeammates(t *testing.T) {
 func TestFlorContestTieUsesManoAndInvalidatesAllLosingOrdinaryFlores(t *testing.T) {
 	s := opposingFlores(t)
 	s = apply(t, s, 3, rules.Command{Type: "respond", Kind: "accept", Declaration: "con_mi_flor"})
-	s = apply(t, s, 2, rules.Command{Type: "call", Kind: "truco", Declaration: "con_mi_flor"})
+	s = apply(t, s, s.Turn, rules.Command{Type: "call", Kind: "truco", Declaration: "con_mi_flor"})
 	s = apply(t, s, 1, rules.Command{Type: "respond", Kind: "decline", Declaration: "con_mi_flor"})
 	assert.False(t, s.Players[0].FlorValid)
 	assert.False(t, s.Players[2].FlorValid)
@@ -106,9 +109,9 @@ func TestFlorContestPaysNeitherTeamWhenEveryFlorBurns(t *testing.T) {
 	s = apply(t, s, 3, rules.Command{Type: "respond", Kind: "accept", Declaration: "con_mi_flor"})
 	// Each player speaks without the required flor prefix. The final surviving
 	// flor must not keep an earlier provisional entitlement to the wager.
-	s = apply(t, s, 2, rules.Command{Type: "call", Kind: "truco"})
+	s = apply(t, s, 0, rules.Command{Type: "call", Kind: "truco"})
 	s = apply(t, s, 1, rules.Command{Type: "respond", Kind: "raise", Amount: 6})
-	s = apply(t, s, 0, rules.Command{Type: "respond", Kind: "raise", Amount: 9})
+	s = apply(t, s, 2, rules.Command{Type: "respond", Kind: "raise", Amount: 9})
 	s = apply(t, s, 3, rules.Command{Type: "respond", Kind: "decline"})
 	assert.Equal(t, [2]int{6, 0}, s.Scores)
 	assert.Equal(t, []rules.Payout{{Kind: "truco", Team: 0, Points: 6}}, s.Payouts)

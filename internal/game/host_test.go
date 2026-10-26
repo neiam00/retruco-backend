@@ -127,6 +127,63 @@ func newHost(t *testing.T, private bool) (*game.Host, *memoryRepository, string,
 	return host, repository, code, players
 }
 
+func TestDeploymentRestorePreservesTheTurnAndRenewsItsDeadline(t *testing.T) {
+	for _, phase := range []string{"cutting", "playing", "pending canto"} {
+		t.Run(phase, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				host, repository, code, players := newHost(t, false)
+				if phase != "cutting" {
+					cut(t, host, code, players)
+				}
+				before, err := host.Snapshot(code, players[0].ID, 0)
+				require.NoError(t, err)
+				if phase == "pending canto" {
+					require.NoError(t, host.Handle(t.Context(), code, players[before.State.Turn], game.Input{
+						ID: "pre-deploy-truco", Revision: before.State.Revision, Command: rules.Command{Type: "call", Kind: "truco"},
+					}))
+					before, err = host.Snapshot(code, players[0].ID, 0)
+					require.NoError(t, err)
+				}
+				// The API is stopped while the image/migrations are deployed.
+				time.Sleep(time.Minute)
+				restored := game.New(repository, slog.New(slog.NewTextHandler(io.Discard, nil)))
+				require.NoError(t, restored.Restore(t.Context()))
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				go restored.Run(ctx)
+				time.Sleep(45 * time.Second)
+				synctest.Wait()
+				waiting, err := restored.Snapshot(code, players[0].ID, 0)
+				require.NoError(t, err, "the update's reconnect window must outlast an ordinary turn")
+				assert.Equal(t, before.State, waiting.State)
+				assert.True(t, waiting.Deadline.IsZero(), "the clock waits for a seated human")
+				defer restored.ConnectPlayer(code, players[0].ID, "old-browser-reconnected")()
+				time.Sleep(2 * time.Second)
+				synctest.Wait()
+				after, err := restored.Snapshot(code, players[0].ID, 0)
+				require.NoError(t, err)
+				require.Equal(t, before.State, after.State, "deployment must not burn cards, refuse cantos, or advance the turn")
+				assert.Equal(t, before.Sequence, after.Sequence)
+				assert.Equal(t, before.CantoHistory, after.CantoHistory)
+				assert.WithinDuration(t, time.Now().Add(28*time.Second), after.Deadline, time.Millisecond)
+				seat := after.State.Turn
+				if after.State.Pending != nil {
+					seat = (after.State.Pending.Caller + 1) % 2
+				}
+				acting, err := restored.Snapshot(code, players[seat].ID, seat)
+				require.NoError(t, err)
+				require.NotEmpty(t, acting.State.Legal)
+				require.NoError(t, restored.Handle(t.Context(), code, players[seat], game.Input{
+					ID: "first-post-deploy-action", Revision: acting.State.Revision, Command: acting.State.Legal[0],
+				}))
+				continued, err := restored.Snapshot(code, players[0].ID, 0)
+				require.NoError(t, err)
+				assert.Equal(t, after.State.Revision+1, continued.State.Revision)
+			})
+		})
+	}
+}
+
 func TestChooseSeatPreservesTeamsAndRejectsOccupiedSeats(t *testing.T) {
 	repository := &memoryRepository{payloads: make(map[string][]byte)}
 	host := game.New(repository, slog.New(slog.NewTextHandler(io.Discard, nil)))
@@ -293,75 +350,86 @@ func TestDuplicateCommandsAndReconnectDoNotResetTheClock(t *testing.T) {
 
 	restored := game.New(repository, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	require.NoError(t, restored.Restore(t.Context()))
+	defer restored.ConnectPlayer(code, players[turn].ID, "post-deploy-retry")()
 	restarted, err := restored.Snapshot(code, players[turn].ID, turn)
 	require.NoError(t, err)
 	assert.Equal(t, after.State, restarted.State)
-	assert.True(t, after.Deadline.Equal(restarted.Deadline))
+	assert.WithinDuration(t, time.Now().Add(30*time.Second), restarted.Deadline, time.Second)
 	assert.Equal(t, after.Events, restarted.Events, "reconnect and restore retain the same public announcements")
 	assert.Equal(t, after.CantoHistory, restarted.CantoHistory)
+	require.NoError(t, restored.Handle(t.Context(), code, players[turn], input), "retrying an acknowledged command after deployment must remain idempotent")
+	duplicate, err := restored.Snapshot(code, players[turn].ID, turn)
+	require.NoError(t, err)
+	assert.Equal(t, restarted.State, duplicate.State)
+	assert.Equal(t, restarted.Deadline, duplicate.Deadline)
 
 	input.ID = "stale-command"
-	require.Error(t, host.Handle(t.Context(), code, players[turn], input))
+	require.Error(t, restored.Handle(t.Context(), code, players[turn], input))
 }
 
 func TestCantoHistorySurvivesTheNextHandAndRestart(t *testing.T) {
-	host, repository, code, players := newHost(t, false)
-	view := cut(t, host, code, players)
-	assert.Empty(t, view.CantoHistory, "cutting the deck is not a canto")
-	caller := view.State.Turn
-	require.NoError(t, host.Handle(t.Context(), code, players[caller], game.Input{
-		ID: "truco", Revision: view.State.Revision, Command: rules.Command{Type: "call", Kind: "truco"},
-	}))
-	view, err := host.Snapshot(code, players[caller].ID, caller)
-	require.NoError(t, err)
-	responder := (caller + 1) % len(players)
-	require.NoError(t, host.Handle(t.Context(), code, players[responder], game.Input{
-		ID: "decline", Revision: view.State.Revision, Command: rules.Command{Type: "respond", Kind: "decline"},
-	}))
-	view, err = host.Snapshot(code, players[caller].ID, caller)
-	require.NoError(t, err)
-	require.Equal(t, rules.HandOver, view.State.Phase)
-	require.Len(t, view.CantoHistory, 2)
-	assert.Equal(t, "truco", view.CantoHistory[0].Event.Kind)
-	assert.Equal(t, caller, view.CantoHistory[0].Event.Seat)
-	assert.Equal(t, "decline", view.CantoHistory[1].Event.Kind)
-	assert.Equal(t, responder, view.CantoHistory[1].Event.Seat)
+	synctest.Test(t, func(t *testing.T) {
+		host, repository, code, players := newHost(t, false)
+		view := cut(t, host, code, players)
+		assert.Empty(t, view.CantoHistory, "cutting the deck is not a canto")
+		caller := view.State.Turn
+		require.NoError(t, host.Handle(t.Context(), code, players[caller], game.Input{
+			ID: "truco", Revision: view.State.Revision, Command: rules.Command{Type: "call", Kind: "truco"},
+		}))
+		view, err := host.Snapshot(code, players[caller].ID, caller)
+		require.NoError(t, err)
+		responder := (caller + 1) % len(players)
+		require.NoError(t, host.Handle(t.Context(), code, players[responder], game.Input{
+			ID: "decline", Revision: view.State.Revision, Command: rules.Command{Type: "respond", Kind: "decline"},
+		}))
+		view, err = host.Snapshot(code, players[caller].ID, caller)
+		require.NoError(t, err)
+		require.Equal(t, rules.HandOver, view.State.Phase)
+		require.Len(t, view.CantoHistory, 2)
+		assert.Equal(t, "truco", view.CantoHistory[0].Event.Kind)
+		assert.Equal(t, caller, view.CantoHistory[0].Event.Seat)
+		assert.Equal(t, "decline", view.CantoHistory[1].Event.Kind)
+		assert.Equal(t, responder, view.CantoHistory[1].Event.Seat)
 
-	// Expire a real saved hand through the host's normal deadline loop.
-	var saved game.Match
-	require.NoError(t, json.Unmarshal(repository.payloads[code], &saved))
-	saved.Deadline = time.Now().Add(-time.Second)
-	payload, err := json.Marshal(saved)
-	require.NoError(t, err)
-	repository.payloads[code] = payload
-	host = game.New(repository, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	require.NoError(t, host.Restore(t.Context()))
-	ctx, cancel := context.WithCancel(t.Context())
-	stopped := make(chan struct{})
-	go func() {
-		defer close(stopped)
-		host.Run(ctx)
-	}()
-	t.Cleanup(func() { cancel(); <-stopped })
-	require.Eventually(t, func() bool {
-		current, snapshotErr := host.Snapshot(code, players[caller].ID, caller)
-		return snapshotErr == nil && current.State.HandNumber == 2
-	}, time.Second, 10*time.Millisecond)
-	cancel()
-	<-stopped
+		// Expire a real saved hand through the host's normal deadline loop.
+		var saved game.Match
+		require.NoError(t, json.Unmarshal(repository.payloads[code], &saved))
+		saved.Deadline = time.Now().Add(-time.Second)
+		payload, err := json.Marshal(saved)
+		require.NoError(t, err)
+		repository.payloads[code] = payload
+		host = game.New(repository, slog.New(slog.NewTextHandler(io.Discard, nil)))
+		require.NoError(t, host.Restore(t.Context()))
+		defer host.ConnectPlayer(code, players[0].ID, "post-deploy-tab")()
+		ctx, cancel := context.WithCancel(t.Context())
+		stopped := make(chan struct{})
+		go func() {
+			defer close(stopped)
+			host.Run(ctx)
+		}()
+		t.Cleanup(func() { cancel(); <-stopped })
+		time.Sleep(5 * time.Second)
+		synctest.Wait()
+		require.Eventually(t, func() bool {
+			current, snapshotErr := host.Snapshot(code, players[caller].ID, caller)
+			return snapshotErr == nil && current.State.HandNumber == 2
+		}, time.Second, 10*time.Millisecond)
+		cancel()
+		<-stopped
 
-	secondHand := cut(t, host, code, players)
-	assert.Equal(t, view.CantoHistory, secondHand.CantoHistory)
-	require.NoError(t, host.Handle(t.Context(), code, players[secondHand.State.Turn], game.Input{
-		ID: "second-truco", Revision: secondHand.State.Revision, Command: rules.Command{Type: "call", Kind: "truco"},
-	}))
-	restarted := game.New(repository, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	require.NoError(t, restarted.Restore(t.Context()))
-	restored, err := restarted.Snapshot(code, "spectator", 0)
-	require.NoError(t, err)
-	require.Len(t, restored.CantoHistory, 3)
-	assert.Equal(t, view.CantoHistory, restored.CantoHistory[:2])
-	assert.Equal(t, 2, restored.CantoHistory[2].Hand)
+		secondHand := cut(t, host, code, players)
+		assert.Equal(t, view.CantoHistory, secondHand.CantoHistory)
+		require.NoError(t, host.Handle(t.Context(), code, players[secondHand.State.Turn], game.Input{
+			ID: "second-truco", Revision: secondHand.State.Revision, Command: rules.Command{Type: "call", Kind: "truco"},
+		}))
+		restarted := game.New(repository, slog.New(slog.NewTextHandler(io.Discard, nil)))
+		require.NoError(t, restarted.Restore(t.Context()))
+		restored, err := restarted.Snapshot(code, "spectator", 0)
+		require.NoError(t, err)
+		require.Len(t, restored.CantoHistory, 3)
+		assert.Equal(t, view.CantoHistory, restored.CantoHistory[:2])
+		assert.Equal(t, 2, restored.CantoHistory[2].Hand)
+	})
 }
 
 func TestPersistenceFailureDoesNotPublishAnUncommittedMove(t *testing.T) {
@@ -440,47 +508,38 @@ func TestMembershipWritesOnlyAddNewHumans(t *testing.T) {
 }
 
 func TestCantoInterruptionAndResumptionEachReceiveThirtySeconds(t *testing.T) {
-	host, repository, code, players := newHost(t, false)
-	view := cut(t, host, code, players)
-	caller := view.State.Turn
-	responder := (caller + 1) % len(players)
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-
-	// Resume from a valid saved match with only five seconds left. This checks
-	// that transitions create a fresh window rather than inheriting that clock.
-	shortenSavedWindow := func() {
-		var saved game.Match
-		require.NoError(t, json.Unmarshal(repository.payloads[code], &saved))
-		saved.Deadline = time.Now().Add(5 * time.Second)
-		payload, err := json.Marshal(saved)
-		require.NoError(t, err)
-		repository.payloads[code] = payload
-		host = game.New(repository, log)
-		require.NoError(t, host.Restore(t.Context()))
-	}
-	act := func(id string, seat int, command rules.Command) game.Snapshot {
-		before, err := host.Snapshot(code, players[seat].ID, seat)
-		require.NoError(t, err)
-		require.NoError(t, host.Handle(t.Context(), code, players[seat], game.Input{
-			ID: id, Revision: before.State.Revision, Command: command,
-		}))
-		after, err := host.Snapshot(code, players[seat].ID, seat)
-		require.NoError(t, err)
-		assert.InDelta(t, 30, after.Deadline.Sub(after.ServerTime).Seconds(), 1)
-		return after
-	}
-	shortenSavedWindow()
-	act("truco", caller, rules.Command{Type: "call", Kind: "truco", Declaration: "con_mi_flor"})
-	shortenSavedWindow()
-	interrupted := act("interrupt", responder, rules.Command{Type: "call", Kind: "ley_envido"})
-	require.NotNil(t, interrupted.State.Suspended)
-	shortenSavedWindow()
-	resumed := act("accept-envido", caller, rules.Command{Type: "respond", Kind: "accept", Mode: "sin_ley", Declaration: "con_mi_flor"})
-	require.NotNil(t, resumed.State.Pending)
-	assert.Equal(t, "truco", resumed.State.Pending.Kind)
-	assert.Nil(t, resumed.State.Suspended)
-	shortenSavedWindow()
-	playing := act("accept-truco", responder, rules.Command{Type: "respond", Kind: "accept", Declaration: "con_mi_flor"})
-	assert.Nil(t, playing.State.Pending)
-	assert.Equal(t, caller, playing.State.Turn)
+	synctest.Test(t, func(t *testing.T) {
+		host, _, code, players := newHost(t, false)
+		view := cut(t, host, code, players)
+		caller := view.State.Turn
+		responder := (caller + 1) % len(players)
+		// Let each real response window reach five seconds remaining. Transitions
+		// must renew that clock without relying on a server restart.
+		shortenSavedWindow := func() { time.Sleep(25 * time.Second) }
+		act := func(id string, seat int, command rules.Command) game.Snapshot {
+			before, err := host.Snapshot(code, players[seat].ID, seat)
+			require.NoError(t, err)
+			require.NoError(t, host.Handle(t.Context(), code, players[seat], game.Input{
+				ID: id, Revision: before.State.Revision, Command: command,
+			}))
+			after, err := host.Snapshot(code, players[seat].ID, seat)
+			require.NoError(t, err)
+			assert.InDelta(t, 30, after.Deadline.Sub(after.ServerTime).Seconds(), 1)
+			return after
+		}
+		shortenSavedWindow()
+		act("truco", caller, rules.Command{Type: "call", Kind: "truco", Declaration: "con_mi_flor"})
+		shortenSavedWindow()
+		interrupted := act("interrupt", responder, rules.Command{Type: "call", Kind: "ley_envido"})
+		require.NotNil(t, interrupted.State.Suspended)
+		shortenSavedWindow()
+		resumed := act("accept-envido", caller, rules.Command{Type: "respond", Kind: "accept", Mode: "sin_ley", Declaration: "con_mi_flor"})
+		require.NotNil(t, resumed.State.Pending)
+		assert.Equal(t, "truco", resumed.State.Pending.Kind)
+		assert.Nil(t, resumed.State.Suspended)
+		shortenSavedWindow()
+		playing := act("accept-truco", responder, rules.Command{Type: "respond", Kind: "accept", Declaration: "con_mi_flor"})
+		assert.Nil(t, playing.State.Pending)
+		assert.Equal(t, caller, playing.State.Turn)
+	})
 }

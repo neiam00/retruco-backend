@@ -121,13 +121,28 @@ Unstarted tables are deleted when their last connected human leaves explicitly. 
 seated humans disconnect, there is a 10-second grace period for a page refresh
 or brief connection loss. Another connected tab keeps the room alive;
 spectators and CPU seats do not. This applies to both waiting and started rooms,
-including CPU games. Newly created and restored rooms also have 10 seconds for a
-player to connect. Waiting rooms and their memberships are deleted. Started
+including CPU games. Newly created rooms and restored waiting lobbies also have
+10 seconds for a player to connect. Restored active matches instead wait up to
+2 minutes for a seated human, with their turn clocks paused until that player
+returns. They then receive a fresh 30-second card/canto window (5 seconds between
+hands). Saved cards, scores, turns, revisions, command IDs, and canto history are
+retained. Ordinary reconnects and duplicate commands do not renew human turn
+deadlines. Waiting rooms and their memberships are deleted. Started
 games are archived as abandoned, preserving account history without assigning a
 winner; their rooms cannot be joined or restored after a restart.
 `GET /api/matches/events` streams public room-list updates to open browsers.
 Connected players retain the normal turn timers and forfeit behavior.
 Completed matches do not consume the active-table capacity.
+
+Before an automatic VPS restart, the deployment script pauses play and broadcasts
+an update notice for 10 seconds. Match snapshots expose optional `updating`
+metadata; the browser keeps the notice visible through transient API failures,
+reconnects automatically, and clears it on the replacement API's first snapshot.
+Card/canto and vacant-room timers pause during the announcement. Cancelling the
+deployment before shutdown clears the notice and renews the deadlines. The
+operator endpoint is `/internal/deployment`, restricted to the container's real
+loopback address and the existing proxy secret; public forwarded headers cannot
+authorize it. No new secrets are required.
 
 Joining players choose a vacant seat in the waiting room. `POST /api/matches/{code}/join`
 accepts `{ "seat": 2 }` with a zero-based index; seats 0 and 2 share a team, as do

@@ -35,14 +35,24 @@ func (s *State) call(seat int, c Command) error {
 	if s.EnvidoClosed && (!s.EnvidoCanceled || c.Kind != "flor") {
 		return fmt.Errorf("envido betting closed")
 	}
+	// Check earlier declarations before this canto can declare the caller's flor.
+	// Once anyone has announced flor, envido must use the flor contest instead.
+	if (c.Kind == "envido" || c.Kind == "ley_envido") && s.hasDeclaredFlor() {
+		return fmt.Errorf("a flor was declared: use flor tengo y la mia envida")
+	}
 	wager := Wager{Kind: c.Kind, Caller: team, Value: 2, Previous: 1}
 	switch c.Kind {
 	case "envido":
-		// The user's clarification: ordinary envido forfeits its caller's flor,
-		// even if the caller adds flor wording. Receta is always protected.
-		s.burnFlor(seat)
+		if c.Mode != "" && c.Mode != "sin_ley" {
+			return fmt.Errorf("invalid ordinary envido mode")
+		}
+		wager.Mode = c.Mode
+		s.declareCanto(seat, c.Declaration)
+		if !declaresFlor(c.Declaration) || c.Mode == "sin_ley" {
+			s.burnFlor(seat)
+		}
 	case "ley_envido":
-		if c.Declaration == "con_mi_flor" || c.Declaration == "con_flor" {
+		if c.Mode == "" && declaresFlor(c.Declaration) {
 			return fmt.Errorf("a ley envido cannot announce flor")
 		}
 		if c.Mode != "" && c.Mode != "con_ley" && c.Mode != "sin_ley" {
@@ -54,17 +64,18 @@ func (s *State) call(seat int, c Command) error {
 		wager.Mode = c.Mode
 		s.Ley = true
 		// The call itself says A ley, before either teammate shows a card.
-		// Choosing sin ley changes the comparison, not either flor's validity.
 		s.DoubleFlor[team] = true
+		if declaresFlor(c.Declaration) {
+			s.declareCanto(seat, c.Declaration)
+		}
+		if c.Mode == "sin_ley" {
+			s.burnFlor(seat)
+		}
 	case "flor":
 		if !s.Players[seat].FlorValid || s.Players[seat].Holding.Receta || !s.teamHasFlor(1-team, false) {
 			return fmt.Errorf("flor contest requires opposing flores")
 		}
-		declared := false
-		for _, player := range s.Players {
-			declared = declared || player.FlorDeclared
-		}
-		if !declared {
+		if !s.hasDeclaredFlor() {
 			return fmt.Errorf("a flor must be declared first")
 		}
 		s.Players[seat].FlorDeclared = true
@@ -90,9 +101,11 @@ func (s *State) respond(seat int, c Command) error {
 	}
 	choosesLey := wager.Kind == "ley_envido" && wager.Mode == "" &&
 		(c.Kind == "accept" || c.Kind == "raise" || c.Kind == "falta")
+	declinesSinLey := (wager.Kind == "envido" || wager.Kind == "ley_envido") &&
+		c.Kind == "decline" && c.Mode == "sin_ley"
 	// LegalActions uses this validation too, so irrelevant modes must be
 	// rejected rather than producing duplicate replies with different labels.
-	if c.Mode != "" && !choosesLey {
+	if c.Mode != "" && !choosesLey && !declinesSinLey {
 		return fmt.Errorf("this response does not choose a ley mode")
 	}
 	if c.Kind == "flowers_no" {
@@ -108,6 +121,9 @@ func (s *State) respond(seat int, c Command) error {
 		return fmt.Errorf("invalid response")
 	}
 	s.declareCanto(seat, c.Declaration)
+	if c.Mode == "sin_ley" {
+		s.burnFlor(seat)
+	}
 	if wager.Kind == "envido" && c.Kind != "decline" && s.teamHasFlor(team, true) {
 		return fmt.Errorf("ordinary flor blocks envido: a las flores no")
 	}
@@ -124,7 +140,8 @@ func (s *State) respond(seat int, c Command) error {
 			s.settle(wager.Caller)
 		} else {
 			if wager.Kind == "flor" {
-				s.burnTeamFlor(team)
+				// Con mi flor me achico forfeits only the speaker's flor.
+				s.burnFlor(seat)
 			}
 			s.Envido = wager
 			s.Envido.Value = wager.Previous
@@ -193,7 +210,7 @@ func (s *State) burnTeamFlor(team int) {
 }
 
 func (s *State) declareCanto(seat int, declaration string) {
-	hasFlorPrefix := declaration == "con_mi_flor" || declaration == "con_flor"
+	hasFlorPrefix := declaresFlor(declaration)
 	player := &s.Players[seat]
 	if hasFlorPrefix && player.FlorValid && !player.Holding.Receta {
 		player.FlorDeclared = true
@@ -201,6 +218,24 @@ func (s *State) declareCanto(seat int, declaration string) {
 	if s.Config.FlorRequired && !hasFlorPrefix {
 		s.burnFlor(seat)
 	}
+}
+
+func declaresFlor(declaration string) bool {
+	switch declaration {
+	case "flor", "presento_flor", "flor_flor", "con_mi_flor", "con_flor":
+		return true
+	default:
+		return false
+	}
+}
+
+func (s State) hasDeclaredFlor() bool {
+	for _, player := range s.Players {
+		if player.FlorDeclared {
+			return true
+		}
+	}
+	return false
 }
 
 func (s State) teamHasFlor(team int, ordinaryOnly bool) bool {
