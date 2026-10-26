@@ -109,6 +109,7 @@ type Host struct {
 	updating         bool
 	deploymentMu     sync.Mutex
 	listingListeners map[chan struct{}]bool
+	listingJSON      string
 	repository       Repository
 	log              *slog.Logger
 }
@@ -222,29 +223,6 @@ func addedHumanMembers(previous, next *Match) []string {
 		}
 	}
 	return members
-}
-
-func (h *Host) persist(ctx context.Context, match *Match, create bool, members []string) error {
-	payload, err := json.Marshal(match)
-	if err != nil {
-		return err
-	}
-	finished := match.Expired || (match.State != nil && match.State.Phase == rules.MatchOver)
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	if create {
-		err = h.repository.CreateMatch(ctx, match.Code, payload, members)
-	} else {
-		err = h.repository.SaveMatch(ctx, match.Code, payload, finished, members)
-	}
-	if errors.Is(err, store.ErrMatchCodeInUse) {
-		return err
-	}
-	if err != nil {
-		h.log.Error("persist match", "code", match.Code, "error", err)
-		return fmt.Errorf("no se pudo guardar la jugada. Inténtalo de nuevo")
-	}
-	return nil
 }
 
 func (h *Host) Create(ctx context.Context, user store.User, config rules.Config, private bool, options RoomOptions) (string, error) {
@@ -385,7 +363,7 @@ func clone(m *Match) *Match {
 func (h *Host) commit(ctx context.Context, r *room, next *Match) error {
 	previous := r.match
 	next.LastActivity = time.Now()
-	if err := h.persist(ctx, next, false, addedHumanMembers(previous, next)); err != nil {
+	if err := h.persist(ctx, next, false, addedHumanMembers(previous, next), previous); err != nil {
 		return err
 	}
 	r.match = next
@@ -411,6 +389,7 @@ func (h *Host) commit(ctx context.Context, r *room, next *Match) error {
 
 // Caller holds r.mu. Notifications coalesce without blocking a game.
 func (r *room) notify() {
+	r.publications = [8]*Publication{}
 	for channel := range r.listeners {
 		select {
 		case channel <- struct{}{}:
@@ -437,6 +416,11 @@ func (h *Host) Snapshot(code, userID string, perspective int) (Snapshot, error) 
 		return Snapshot{}, fmt.Errorf("no encontramos esa mesa")
 	}
 	defer r.mu.Unlock()
+	return snapshotLocked(r, code, userID, perspective, h.Updating()), nil
+}
+
+// Caller holds r.mu. The returned snapshot owns its mutable view data.
+func snapshotLocked(r *room, code, userID string, perspective int, updating bool) Snapshot {
 	m := r.match
 	seat := seatOf(m, userID)
 	if seat >= 0 {
@@ -446,7 +430,7 @@ func (h *Host) Snapshot(code, userID string, perspective int) (Snapshot, error) 
 		perspective = 0
 	}
 	v := Snapshot{
-		Updating:      h.Updating(),
+		Updating:      updating,
 		CPUController: r.controllerSeat(m),
 		CPUPaused:     len(m.Options.CPUSeats) > 0 && m.State != nil && m.State.Phase != rules.MatchOver && r.controller == "",
 		Options:       m.Options,
@@ -477,7 +461,7 @@ func (h *Host) Snapshot(code, userID string, perspective int) (Snapshot, error) 
 			v.Signals = append(v.Signals, signal)
 		}
 	}
-	return v, nil
+	return v
 }
 
 type Listing struct {

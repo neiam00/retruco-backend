@@ -107,7 +107,10 @@ independently per room, with at most one timer operation per room and shutdown
 waiting for outstanding timer work. Concurrent room creation reserves capacity
 before persistence, so the 1,000-active-table limit includes pending creations.
 
-Ordinary moves persist with one atomic match update. Creation and newly seated
+Ordinary moves persist with one atomic match update. Migration 00002 separates
+retained chat/canto history so unchanged history is neither encoded nor rewritten
+on each move. See [capacity changes and migration rollback](deploy/CAPACITY.md).
+Creation and newly seated
 humans still write membership and state in one transaction; leaving does not
 remove historical membership. Session validation uses a 4,096-entry LRU cache
 for up to 30 seconds, bounded by the database session expiration. Concurrent

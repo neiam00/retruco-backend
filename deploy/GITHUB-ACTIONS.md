@@ -84,9 +84,9 @@ the matching `API_PROXY_SECRET`.
 ## What a deployment does
 
 1. Checks the deployment script, runs its failure-path tests, builds the Docker
-   builder stage, and runs `go test ./...` and `go vet ./...` with that toolchain.
-   PostgreSQL integration tests remain opt-in; this job does not supply
-   `DATABASE_TEST_URL`.
+   builder stage, migrates a disposable PostgreSQL 18 service, and runs
+   `go test -race ./...` with `DATABASE_TEST_URL` plus `go vet ./...`.
+   Migration, database, HTTP/WebSocket and race tests gate production deployment.
 2. Archives the exact pushed commit and uploads it and the deployment script over
    verified SSH. Runs the script from a file with stdin closed so Docker cannot
    consume the remaining deployment commands.
@@ -157,6 +157,14 @@ rejects overlapping calls to the deployment script.
 There is **no automatic database or image rollback after migrations**. An old
 image may be incompatible with the new schema. Do not retry with an old commit
 without reviewing migration compatibility.
+
+Migration 00002 separates retained chat/canto history from frequently updated
+match state. It validates every reconstructed JSON document in its transaction.
+The old API must remain stopped throughout migration: it does not understand
+the new columns. To roll back, stop writes, run **the new migration binary** with
+`down-to 1`, and only then start the old image. The Down migration merges the
+latest history columns back into complete snapshots, including post-upgrade
+writes. Take a fresh backup before this operation. See [capacity changes](CAPACITY.md).
 
 On the VPS, use `retruco-compose ps -a` and
 `retruco-compose logs --tail=100 api proxy` to investigate. Health checks do not

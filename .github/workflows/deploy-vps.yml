@@ -18,6 +18,20 @@ jobs:
     if: github.ref == 'refs/heads/master'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: retruco_test
+          POSTGRES_PASSWORD: disposable_ci_password
+          POSTGRES_DB: retruco_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U retruco_test -d retruco_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
     environment:
       name: production
       url: https://retru.co.ve
@@ -38,7 +52,12 @@ jobs:
       - name: Build and test backend with its Docker toolchain
         run: |
           docker build --target build --tag retruco-ci .
-          docker run --rm retruco-ci go test ./...
+          docker run --rm --network host \
+            -e DATABASE_URL=postgres://retruco_test:disposable_ci_password@127.0.0.1:5432/retruco_test?sslmode=disable \
+            retruco-ci go run ./cmd/migrate up
+          docker run --rm --network host \
+            -e DATABASE_TEST_URL=postgres://retruco_test:disposable_ci_password@127.0.0.1:5432/retruco_test?sslmode=disable \
+            retruco-ci sh -ec 'apk add --no-cache build-base >/dev/null; CGO_ENABLED=1 go test -race ./...'
           docker run --rm retruco-ci go vet ./...
 
       - name: Configure verified SSH access

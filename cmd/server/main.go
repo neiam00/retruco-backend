@@ -85,6 +85,7 @@ func run(log *slog.Logger) error {
 		MaxHeaderBytes:    16384,
 	}
 	go host.Run(ctx)
+	go maintainSessions(ctx, repository, log)
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- httpServer.ListenAndServe() }()
 	log.Info("server listening", "address", httpServer.Addr)

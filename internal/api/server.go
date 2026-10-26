@@ -62,6 +62,7 @@ type Server struct {
 	voice           *voiceHub
 	turnstileClient *http.Client
 	sessions        *sessionCache
+	passwordSlots   chan struct{}
 }
 
 type window struct {
@@ -97,6 +98,7 @@ func New(ctx context.Context, config Config, repository Repository, host *game.H
 		voice:           newVoiceHub(),
 		turnstileClient: turnstileClient,
 		sessions:        newSessionCache(),
+		passwordSlots:   make(chan struct{}, 1),
 	}, nil
 }
 
@@ -115,7 +117,15 @@ func (s *Server) Handler() http.Handler {
 	r.Post("/api/login", s.login)
 	r.Post("/api/logout", s.logout)
 	r.Get("/api/history", s.history)
-	r.Get("/api/matches", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, s.host.List()) })
+	r.Get("/api/matches", func(w http.ResponseWriter, r *http.Request) {
+		data, err := s.host.ListingJSON()
+		if err != nil {
+			s.internalError(w, err)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, data)
+	})
 	r.Get("/api/matches/events", s.matchEvents)
 	r.Post("/api/matches", s.createMatch)
 	r.Get("/api/matches/{code}", s.matchSnapshot)
@@ -343,6 +353,11 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 	if !s.requireTurnstile(w, r, input.TurnstileToken, "register") {
 		return
 	}
+	release, ok := s.passwordAdmission(w)
+	if !ok {
+		return
+	}
+	defer release()
 	hash, err := bcrypt.GenerateFromPassword([]byte(input.Password), 12)
 	if err != nil {
 		s.internalError(w, err)
@@ -370,6 +385,11 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	if !s.requireTurnstile(w, r, input.TurnstileToken, "login") {
 		return
 	}
+	release, ok := s.passwordAdmission(w)
+	if !ok {
+		return
+	}
+	defer release()
 	user, hash, err := s.store.Credentials(r.Context(), strings.ToLower(strings.TrimSpace(input.Username)))
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		s.internalError(w, err)
@@ -481,8 +501,10 @@ func (s *Server) internalError(w http.ResponseWriter, err error) {
 }
 
 func (s *Server) socket(w http.ResponseWriter, r *http.Request) {
-	user, ok := s.requireUser(w, r)
-	if !ok {
+	v2 := r.URL.Query().Get("transport") == "2"
+	user, authErr := s.authenticate(r)
+	if authErr != nil && !v2 {
+		fail(w, 401, "Inicia sesión para continuar.")
 		return
 	}
 	if !s.allowedOrigin(r.Header.Get("Origin")) {
@@ -490,8 +512,9 @@ func (s *Server) socket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	code := strings.ToUpper(chi.URLParam(r, "code"))
-	if _, err := s.host.Snapshot(code, user.ID, 0); err != nil {
-		fail(w, 404, err.Error())
+	_, roomErr := s.host.VoiceAccess(code, user.ID)
+	if roomErr != nil && !v2 {
+		fail(w, 404, roomErr.Error())
 		return
 	}
 	// Exact origins were checked above; the library's same-host check remains
@@ -511,6 +534,17 @@ func (s *Server) socket(w http.ResponseWriter, r *http.Request) {
 	conn.SetReadLimit(8192)
 	ctx, cancel := context.WithCancel(s.ctx)
 	defer cancel()
+	if authErr != nil || roomErr != nil {
+		status, reason := 404, "No encontramos esa mesa. Revisa el código."
+		if authErr != nil {
+			status, reason = 401, "Inicia sesión para continuar."
+		}
+		writeCtx, done := context.WithTimeout(ctx, 5*time.Second)
+		_ = wsjson.Write(writeCtx, conn, map[string]any{"type": "error", "status": status, "error": reason})
+		done()
+		_ = conn.Close(websocket.StatusPolicyViolation, reason)
+		return
+	}
 	connectionID := rand.Text()
 	disconnect := s.host.ConnectPlayer(code, user.ID, connectionID)
 	defer disconnect()
@@ -519,6 +553,7 @@ func (s *Server) socket(w http.ResponseWriter, r *http.Request) {
 	type message struct {
 		Input       game.Input `json:"input"`
 		Perspective *int       `json:"perspective,omitempty"`
+		Resync      bool       `json:"resync,omitempty"`
 	}
 	incoming := make(chan message, 8)
 	go func() {
@@ -541,10 +576,23 @@ func (s *Server) socket(w http.ResponseWriter, r *http.Request) {
 		defer done()
 		return wsjson.Write(writeCtx, conn, value)
 	}
-	snapshot := func() error {
+	stream := gameStream{epoch: rand.Text()}
+	snapshot := func(baseline bool) error {
 		current, err := s.authenticate(r)
 		if err != nil || current.ID != user.ID {
 			return fmt.Errorf("session expired")
+		}
+		if v2 {
+			value, err := s.host.Publication(code, user.ID, perspective)
+			if err != nil {
+				_ = send(map[string]string{"type": "room_closed"})
+				return err
+			}
+			message, err := stream.message(value, s.host.CPUWork(code, user.ID, connectionID), baseline, time.Now())
+			if err != nil {
+				return err
+			}
+			return send(message)
 		}
 		value, err := s.host.Snapshot(code, user.ID, perspective)
 		if err != nil {
@@ -556,7 +604,7 @@ func (s *Server) socket(w http.ResponseWriter, r *http.Request) {
 			"cpu": s.host.CPUWork(code, user.ID, connectionID),
 		})
 	}
-	if snapshot() != nil {
+	if snapshot(true) != nil {
 		return
 	}
 	heartbeat := time.NewTicker(25 * time.Second)
@@ -577,7 +625,7 @@ func (s *Server) socket(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		case <-updates:
-			if snapshot() != nil {
+			if snapshot(false) != nil {
 				return
 			}
 		case msg := <-incoming:
@@ -593,9 +641,15 @@ func (s *Server) socket(w http.ResponseWriter, r *http.Request) {
 				}
 				continue
 			}
+			if v2 && msg.Resync {
+				if snapshot(true) != nil {
+					return
+				}
+				continue
+			}
 			if msg.Perspective != nil {
 				perspective = *msg.Perspective
-				if snapshot() != nil {
+				if snapshot(true) != nil {
 					return
 				}
 				continue
@@ -604,13 +658,13 @@ func (s *Server) socket(w http.ResponseWriter, r *http.Request) {
 				if send(map[string]string{"type": "error", "error": err.Error()}) != nil {
 					return
 				}
-				if snapshot() != nil {
+				if snapshot(true) != nil {
 					return
 				}
 			} else if msg.Input.Command.Type == "leave" && msg.Input.Chat == "" && msg.Input.Signal == "" {
 				// Existing matches still acknowledge leaving with their final
 				// snapshot; a deleted waiting room sends room_closed instead.
-				_ = snapshot()
+				_ = snapshot(true)
 				return
 			}
 		}

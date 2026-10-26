@@ -82,6 +82,7 @@ func (h *Host) SubscribeListings() (<-chan struct{}, func()) {
 
 // Caller holds h.mu. Coalescing keeps slow browsers from blocking game actions.
 func (h *Host) notifyListings() {
+	h.listingJSON = ""
 	for updates := range h.listingListeners {
 		select {
 		case updates <- struct{}{}:

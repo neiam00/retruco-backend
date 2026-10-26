@@ -171,7 +171,7 @@ func (s *Server) voiceSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	code := strings.ToUpper(chi.URLParam(r, "code"))
-	snapshot, err := s.host.Snapshot(code, user.ID, 0)
+	canSpeak, err := s.host.VoiceAccess(code, user.ID)
 	if err != nil {
 		fail(w, http.StatusNotFound, "No encontramos esa mesa.")
 		return
@@ -189,7 +189,7 @@ func (s *Server) voiceSocket(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithCancel(s.ctx)
 	defer cancel()
 	member := &voiceMember{
-		peer:   voicePeer{ID: rand.Text(), Name: user.Name, CanSpeak: snapshot.Seat >= 0 || snapshot.Options.SpectatorsCanSpeak},
+		peer:   voicePeer{ID: rand.Text(), Name: user.Name, CanSpeak: canSpeak},
 		userID: user.ID, inbox: make(chan voiceMessage, 128), cancel: cancel,
 	}
 	s.voice.join(code, member, s.config.Voice.iceServers(user.ID))
@@ -216,9 +216,9 @@ func (s *Server) voiceSocket(w http.ResponseWriter, r *http.Request) {
 		if authErr != nil || current.ID != user.ID {
 			return false
 		}
-		view, viewErr := s.host.Snapshot(code, user.ID, 0)
+		canSpeak, accessErr := s.host.VoiceAccess(code, user.ID)
 		// Rejoin after a seat change, so every peer gets fresh permissions.
-		return viewErr == nil && member.peer.CanSpeak == (view.Seat >= 0 || view.Options.SpectatorsCanSpeak)
+		return accessErr == nil && member.peer.CanSpeak == canSpeak
 	}
 	heartbeat := time.NewTicker(25 * time.Second)
 	defer heartbeat.Stop()

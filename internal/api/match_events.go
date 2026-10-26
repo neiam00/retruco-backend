@@ -1,7 +1,6 @@
 package api
 
 import (
-	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -15,23 +14,25 @@ func (s *Server) matchEvents(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("X-Accel-Buffering", "no")
 	controller := http.NewResponseController(w)
-	write := func(message string) error {
+	write := func(parts ...string) error {
 		if err := controller.SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil && !errors.Is(err, http.ErrNotSupported) {
 			return err
 		}
 		// Limit a blocked write, not the idle time between events or heartbeats.
 		defer func() { _ = controller.SetWriteDeadline(time.Time{}) }()
-		if _, err := io.WriteString(w, message); err != nil {
-			return err
+		for _, part := range parts {
+			if _, err := io.WriteString(w, part); err != nil {
+				return err
+			}
 		}
 		return controller.Flush()
 	}
 	sendListings := func() error {
-		payload, err := json.Marshal(s.host.List())
+		payload, err := s.host.ListingJSON()
 		if err != nil {
 			return err
 		}
-		return write("data: " + string(payload) + "\n\n")
+		return write("data: ", payload, "\n\n")
 	}
 	if sendListings() != nil {
 		return

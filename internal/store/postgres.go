@@ -61,13 +61,39 @@ func (p *Postgres) DeleteSession(ctx context.Context, hash string) error {
 	return err
 }
 
-const updateMatchSQL = `UPDATE matches SET payload=$2, finished=$3, updated_at=now() WHERE code=$1`
+// CleanupExpiredSessions removes a bounded batch using the existing expiry
+// index. Active sessions and all user/match history remain unchanged. Lock
+// skipping lets maintenance coexist with logout without waiting on its rows.
+func (p *Postgres) CleanupExpiredSessions(ctx context.Context, limit int) (int64, error) {
+	if limit < 1 || limit > 1000 {
+		return 0, fmt.Errorf("session cleanup limit must be between 1 and 1000")
+	}
+	result, err := p.pool.Exec(ctx, `WITH expired AS (
+		SELECT token_hash FROM sessions WHERE expires_at<=now()
+		ORDER BY expires_at LIMIT $1 FOR UPDATE SKIP LOCKED
+	) DELETE FROM sessions s USING expired e WHERE s.token_hash=e.token_hash`, limit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
 
 // SaveMatch adds only the supplied memberships, retaining historical members.
-// Without additions, a single UPDATE atomically persists an ordinary move.
+// It replaces the complete legacy JSON document, including its histories.
 func (p *Postgres) SaveMatch(ctx context.Context, code string, payload []byte, finished bool, members []string) error {
+	write, err := splitMatch(payload)
+	if err != nil {
+		return err
+	}
+	return p.SaveMatchParts(ctx, code, write, finished, members)
+}
+
+// SaveMatchParts atomically persists an ordinary move with one UPDATE while
+// leaving unmodified history columns untouched, including their TOAST storage.
+func (p *Postgres) SaveMatchParts(ctx context.Context, code string, write MatchWrite, finished bool, members []string) error {
 	if len(members) == 0 {
-		result, err := p.pool.Exec(ctx, updateMatchSQL, code, payload, finished)
+		statement, args := write.update(code, finished)
+		result, err := p.pool.Exec(ctx, statement, args...)
 		if err != nil {
 			return err
 		}
@@ -76,16 +102,24 @@ func (p *Postgres) SaveMatch(ctx context.Context, code string, payload []byte, f
 		}
 		return nil
 	}
-	return p.persistMatch(ctx, code, payload, finished, members, false)
+	return p.persistMatch(ctx, code, write, finished, members, false)
 }
 
 // CreateMatch reserves a code atomically. A finished match keeps its code so a
 // new lobby can never overwrite another account's historical match.
 func (p *Postgres) CreateMatch(ctx context.Context, code string, payload []byte, members []string) error {
-	return p.persistMatch(ctx, code, payload, false, members, true)
+	write, err := splitMatch(payload)
+	if err != nil {
+		return err
+	}
+	return p.CreateMatchParts(ctx, code, write, members)
 }
 
-func (p *Postgres) persistMatch(ctx context.Context, code string, payload []byte, finished bool, members []string, create bool) error {
+func (p *Postgres) CreateMatchParts(ctx context.Context, code string, write MatchWrite, members []string) error {
+	return p.persistMatch(ctx, code, write, false, members, true)
+}
+
+func (p *Postgres) persistMatch(ctx context.Context, code string, write MatchWrite, finished bool, members []string, create bool) error {
 	tx, err := p.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -94,11 +128,12 @@ func (p *Postgres) persistMatch(ctx context.Context, code string, payload []byte
 		// Rollback is best-effort cleanup and is also called after a successful commit.
 		_ = tx.Rollback(ctx)
 	}()
-	statement := updateMatchSQL
+	statement, args := write.update(code, finished)
 	if create {
-		statement = `INSERT INTO matches(code,payload,finished) VALUES($1,$2,$3) ON CONFLICT(code) DO NOTHING`
+		statement = `INSERT INTO matches(code,payload,finished,chat,canto_history) VALUES($1,$2,$3,$4,$5) ON CONFLICT(code) DO NOTHING`
+		args = []any{code, write.Payload, finished, nullableJSON(write.Chat), nullableJSON(write.CantoHistory)}
 	}
-	result, err := tx.Exec(ctx, statement, code, payload, finished)
+	result, err := tx.Exec(ctx, statement, args...)
 	if err != nil {
 		return err
 	}
@@ -125,7 +160,10 @@ func (p *Postgres) DeleteLobby(ctx context.Context, code string) error {
 }
 
 func (p *Postgres) ActiveMatches(ctx context.Context) ([][]byte, error) {
-	rows, err := p.pool.Query(ctx, `SELECT payload FROM matches WHERE NOT finished ORDER BY updated_at LIMIT 1000`)
+	rows, err := p.pool.Query(ctx, `SELECT payload
+		|| CASE WHEN chat IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('Chat', chat) END
+		|| CASE WHEN canto_history IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('CantoHistory', canto_history) END
+		FROM matches WHERE NOT finished ORDER BY updated_at LIMIT 1000`)
 	if err != nil {
 		return nil, err
 	}

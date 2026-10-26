@@ -20,6 +20,8 @@ type room struct {
 	connectionOrder uint64
 	deadline        time.Time
 	recovering      bool
+	// At most one immutable transport view per player/spectator perspective.
+	publications [8]*Publication
 }
 
 func newRoom(match *Match) *room {
@@ -56,6 +58,7 @@ func activeMatch(match *Match) bool {
 // Caller holds Host.mu and, for an already published room, room.mu. Listings
 // contain values only, allowing lobby reads without waiting on any room's I/O.
 func (h *Host) updateListing(match *Match) {
+	h.listingJSON = ""
 	delete(h.listings, match.Code)
 	if !activeMatch(match) || match.Private || occupiedSeats(match) == 0 {
 		return

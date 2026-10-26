@@ -4,6 +4,11 @@ services:
       ALLOWED_ORIGINS: https://retru.co.ve
       COOKIE_SECURE: "true"
       API_PROXY_SECRET: ${API_PROXY_SECRET:?Set API_PROXY_SECRET in both API and Cloudflare Pages}
+      GOMEMLIMIT: ${GOMEMLIMIT:-512MiB}
+    ulimits:
+      nofile:
+        soft: 16384
+        hard: 16384
   proxy:
     image: nginx:stable-alpine
     environment:
@@ -12,8 +17,13 @@ services:
       - "80:80"
       - "443:443"
     volumes:
+      - ./deploy/nginx-main.conf:/etc/nginx/nginx.conf:ro
       - ./deploy/nginx.conf.template:/etc/nginx/templates/default.conf.template:ro
       - ${TLS_CERT_DIR:?Set the certificate directory}:/etc/nginx/tls:ro
     depends_on:
       - api
     restart: unless-stopped
+    ulimits:
+      nofile:
+        soft: 16384
+        hard: 16384
