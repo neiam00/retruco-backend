@@ -165,3 +165,29 @@ func assertRejectedCanto(t *testing.T, state rules.State, seat int, command rule
 	assert.Equal(t, state, next, "rejected cantos must not change the hand")
 	assert.NotContains(t, rules.LegalActions(state, seat), command)
 }
+
+func TestExplicitLeyEnvidoCallsRequirePriorALey(t *testing.T) {
+	before := simple(t)
+	after := apply(t, before, 1, rules.Command{Type: "play", Card: 0, Declaration: "a_ley"})
+	for _, tc := range []struct {
+		name    string
+		command rules.Command
+	}{
+		{name: "con ley", command: rules.Command{Type: "call", Kind: "ley_envido", Mode: "con_ley"}},
+		{name: "sin ley", command: rules.Command{Type: "call", Kind: "ley_envido", Mode: "sin_ley"}},
+		{name: "legacy ordinary sin ley", command: rules.Command{Type: "call", Kind: "envido", Mode: "sin_ley"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, declaration := range []string{"", "a_ley", "flor", "con_mi_flor"} {
+				command := tc.command
+				command.Declaration = declaration
+				assertRejectedCanto(t, before, before.Turn, command)
+			}
+			if tc.command.Kind == "ley_envido" {
+				require.Contains(t, rules.LegalActions(after, after.Turn), tc.command)
+			}
+			pending := apply(t, after, after.Turn, tc.command)
+			assert.Equal(t, tc.command.Mode, pending.Pending.Mode)
+		})
+	}
+}

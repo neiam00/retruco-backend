@@ -528,7 +528,8 @@ func TestCantoInterruptionAndResumptionEachReceiveThirtySeconds(t *testing.T) {
 			return after
 		}
 		shortenSavedWindow()
-		act("truco", caller, rules.Command{Type: "call", Kind: "truco", Declaration: "con_mi_flor"})
+		// Keep flor unannounced so every random deal permits the envido interruption.
+		act("truco", caller, rules.Command{Type: "call", Kind: "truco"})
 		shortenSavedWindow()
 		interrupted := act("interrupt", responder, rules.Command{Type: "call", Kind: "ley_envido"})
 		require.NotNil(t, interrupted.State.Suspended)

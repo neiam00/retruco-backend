@@ -168,9 +168,6 @@ func LegalActions(s State, seat int) []Command {
 			for _, kind := range []string{"envido", "ley_envido", "flor"} {
 				add(Command{Type: "call", Kind: kind, Declaration: declaration})
 			}
-			if !s.Ley {
-				add(Command{Type: "call", Kind: "envido", Mode: "sin_ley", Declaration: declaration})
-			}
 			for _, mode := range []string{"con_ley", "sin_ley"} {
 				add(Command{Type: "call", Kind: "ley_envido", Mode: mode, Declaration: declaration})
 			}

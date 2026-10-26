@@ -64,6 +64,12 @@ Direct user clarification on 2026-10-26 supersedes earlier envido initiation rul
 - On restore, use the current hand's saved canto history (or recent events for
   older snapshots) to clear legacy A ley-only flor flags without clearing actual
   flor announcements or changing the cards, turn, or pending wager.
+- **Con ley, envido**, **Sin ley, envido**, and **Sin ley, no quiero** require
+  an earlier **A ley** in that hand, including one spoken by a CPU. An initial
+  **A ley, envido** also establishes ley for the responding team's choices.
+  Sin ley refusal applies only to envido wagers, never truco or flor contests.
+  Clients receive only the canonical ley-envido calls; legacy ordinary-envido
+  Sin ley payloads must satisfy the same prior-A-ley requirement.
 
 Seats increase counter-clockwise. The dealer's right neighbor is mano; the left
 neighbor cuts and receives the first dealt card. Four-player teammates sit opposite.

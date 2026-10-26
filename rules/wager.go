@@ -46,6 +46,9 @@ func (s *State) call(seat int, c Command) error {
 		if c.Mode != "" && c.Mode != "sin_ley" {
 			return fmt.Errorf("invalid ordinary envido mode")
 		}
+		if c.Mode == "sin_ley" && !s.Ley {
+			return fmt.Errorf("no a ley declaration")
+		}
 		wager.Mode = c.Mode
 		s.declareCanto(seat, c.Declaration)
 		if !declaresFlor(c.Declaration) || c.Mode == "sin_ley" {
@@ -102,7 +105,7 @@ func (s *State) respond(seat int, c Command) error {
 	choosesLey := wager.Kind == "ley_envido" && wager.Mode == "" &&
 		(c.Kind == "accept" || c.Kind == "raise" || c.Kind == "falta")
 	declinesSinLey := (wager.Kind == "envido" || wager.Kind == "ley_envido") &&
-		c.Kind == "decline" && c.Mode == "sin_ley"
+		c.Kind == "decline" && c.Mode == "sin_ley" && (s.Ley || wager.Kind == "ley_envido")
 	// LegalActions uses this validation too, so irrelevant modes must be
 	// rejected rather than producing duplicate replies with different labels.
 	if c.Mode != "" && !choosesLey && !declinesSinLey {
