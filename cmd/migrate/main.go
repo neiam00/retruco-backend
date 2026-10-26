@@ -28,10 +28,12 @@ func main() {
 		log.Fatal(err)
 	}
 	command := "up"
+	var arguments []string
 	if len(os.Args) > 1 {
 		command = os.Args[1]
+		arguments = os.Args[2:]
 	}
-	if err := goose.RunContext(context.Background(), command, db, "migrations"); err != nil {
+	if err := goose.RunContext(context.Background(), command, db, "migrations", arguments...); err != nil {
 		log.Fatal(err)
 	}
 }
