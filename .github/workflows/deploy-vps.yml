@@ -16,7 +16,9 @@ jobs:
   deploy:
     # Manual runs must also use the production branch.
     if: github.ref == 'refs/heads/master'
-    runs-on: ubuntu-24.04
+    # Set VPS_RUNNER to a compatible runner label with static egress when SSH
+    # is restricted to an allowlist. Standard hosted runners use changing IPs.
+    runs-on: ${{ vars.VPS_RUNNER || 'ubuntu-24.04' }}
     timeout-minutes: 45
     services:
       postgres:
@@ -47,6 +49,7 @@ jobs:
       - name: Validate deployment scripts
         run: |
           bash -n deploy/deploy-vps.sh
+          sh -n deploy/renew-certificate.sh
           python3 -m unittest discover -s deploy/tests -p 'test_*.py' -v
 
       - name: Build and test backend with its Docker toolchain
@@ -76,7 +79,10 @@ jobs:
           VPS_PORT="${VPS_PORT:-22}"
           [[ "$VPS_HOST" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*$ ]] || { echo "VPS_HOST must be an IPv4 address or hostname"; exit 1; }
           [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]*$ ]] || { echo "Invalid VPS_USER"; exit 1; }
-          [[ "$VPS_PORT" =~ ^[0-9]{1,5}$ ]] && (( 10#$VPS_PORT >= 1 && 10#$VPS_PORT <= 65535 )) || { echo "Invalid VPS_PORT"; exit 1; }
+          if ! [[ "$VPS_PORT" =~ ^[0-9]{1,5}$ ]] || (( 10#$VPS_PORT < 1 || 10#$VPS_PORT > 65535 )); then
+            echo "Invalid VPS_PORT"
+            exit 1
+          fi
           umask 077
           mkdir -p "$RUNNER_TEMP/retruco-ssh"
           printf '%s\n' "$VPS_SSH_PRIVATE_KEY" | tr -d '\r' > "$RUNNER_TEMP/retruco-ssh/key"

@@ -5,12 +5,6 @@ map $http_upgrade $connection_upgrade {
 }
 
 server {
-    listen 80;
-    server_name ${BACKEND_HOST};
-    return 308 https://${BACKEND_HOST}$request_uri;
-}
-
-server {
     listen 443 ssl;
     server_name ${BACKEND_HOST};
 

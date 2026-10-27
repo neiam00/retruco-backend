@@ -14,7 +14,8 @@ services:
     environment:
       BACKEND_HOST: ${BACKEND_HOST:?Set the backend origin hostname}
     ports:
-      - "80:80"
+      # DNS-01 renewal needs no HTTP listener. Restrict this published port to
+      # Cloudflare source ranges in the provider firewall (Docker can bypass UFW).
       - "443:443"
     volumes:
       - ./deploy/nginx-main.conf:/etc/nginx/nginx.conf:ro

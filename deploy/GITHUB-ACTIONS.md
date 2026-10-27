@@ -6,8 +6,11 @@ Manual runs also require `master`. The frontend keeps its separate Cloudflare Pa
 
 ## One-time prerequisites
 
-Complete the VPS deployment guide first: Docker/Compose, working DNS and TLS for
-`origin.retru.co.ve`, the database, API, NGINX, and Pages must already be configured.
+Complete the [VPS deployment guide](../DEPLOYMENT-VPS.md) first: Docker/Compose, working DNS and TLS for
+the proxied `origin.retru.co.ve`, the database, API, NGINX, and Pages must already
+be configured. Use Full (strict) TLS and DNS-01 renewal; the provider firewall
+allows HTTPS only from Cloudflare. Routine certificate renewal gracefully
+reloads NGINX using the guarded `deploy/renew-certificate.sh` deploy hook.
 The workflow updates an installed application; it does not provision the server,
 issue the initial certificate, or write application secrets.
 
@@ -26,7 +29,25 @@ The SSH user must be able to run Docker, execute the helper, and write
 `/opt/retruco/backend` and `/opt/retruco/backups`. The fresh-VPS guide uses `root`,
 which is the default here. The server needs `bash`, `rsync`, `tar`, `curl`, and
 `flock` (provided by `util-linux` on Ubuntu). Keep inbound SSH available to the
-runner, as well as the existing web and optional voice firewall rules.
+runner separately from the Cloudflare-only HTTPS rule. The HTTPS source list
+does not grant the runner SSH access.
+
+### Runner and SSH firewall
+
+Set the repository Actions variable **`VPS_RUNNER`** to the label of a compatible
+Linux x64 runner with a **fixed public egress IP**, then allow only that IP and
+your administrative CIDRs on the SSH port. A GitHub larger runner with static
+egress or a dedicated self-hosted runner can supply this; the runner needs
+Docker, Python, Bash, and the tools used below. Do not host the CI runner on
+the production droplet. The workflow uses `VPS_RUNNER` as `runs-on` and falls
+back to `ubuntu-24.04` if unset.
+
+Standard GitHub-hosted `ubuntu-24.04` runners use changing addresses and will
+not connect through a fixed SSH allowlist. Configure the fixed-egress runner
+before enabling that restriction; do not broaden HTTPS or assume a fixed IP
+for the default runner. The production environment variable cannot select the
+runner at job scheduling time; use a **repository** Actions variable.
+[GitHub runner networking guidance](https://docs.github.com/en/actions/reference/runners/github-hosted-runners#ip-addresses).
 
 ## GitHub secrets
 
@@ -36,7 +57,7 @@ under **Settings → Environments**. Add these environment secrets there
 
 | Secret | Required? | Value |
 | --- | --- | --- |
-| `VPS_HOST` | Yes | Droplet IPv4 address or `origin.retru.co.ve`, without a scheme or path |
+| `VPS_HOST` | Yes | Droplet IPv4 address or a separate **DNS-only** SSH hostname, without a scheme or path; never the proxied `origin.retru.co.ve` |
 | `VPS_SSH_PRIVATE_KEY` | Yes | Complete private SSH key, including its BEGIN/END lines; dedicated unencrypted key for CI |
 | `VPS_KNOWN_HOSTS` | Yes | Verified SSH known-hosts entry matching `VPS_HOST` and the SSH port |
 | `VPS_USER` | No | SSH username; defaults to `root` |
@@ -60,7 +81,7 @@ Do not commit either the private key or application secrets.
 Collect the host key using the same host/IP you will put in `VPS_HOST`:
 
 ```sh
-ssh-keyscan -t ed25519 origin.retru.co.ve > /tmp/retruco_known_hosts
+ssh-keyscan -t ed25519 DROPLET_IP > /tmp/retruco_known_hosts
 ssh-keygen -lf /tmp/retruco_known_hosts
 ```
 
@@ -78,7 +99,9 @@ again after a future reset.
 
 `POSTGRES_PASSWORD`, `API_PROXY_SECRET`, and optional TURN secrets stay in the
 VPS's `.env.production`. No B2, Cloudflare API, or container-registry token is
-needed. Pages must already have `BACKEND_ORIGIN=https://origin.retru.co.ve` and
+needed **by this workflow**. The DNS-01 token remains in the root-only Certbot
+credentials file on the VPS, outside the application and its container mounts.
+Pages must already have `BACKEND_ORIGIN=https://origin.retru.co.ve` and
 the matching `API_PROXY_SECRET`.
 
 ## What a deployment does
@@ -110,6 +133,10 @@ Treat the backend directory as managed application source. Put other server-only
 files outside it unless they are explicitly protected above. The synchronization
 does not delete database volumes, certificates, the helper, or the backup directory.
 Copy backups off the VPS and manage their retention; deployment does not prune them.
+The installed Certbot hook under `/etc/letsencrypt/renewal-hooks/deploy/` and the
+generated VPS NGINX template are operator-managed. Reinstall/regenerate them
+from the updated source when changing TLS setup; a source deployment alone
+does not replace those installed files.
 
 Active games resume from the last committed PostgreSQL snapshot after the API
 restarts. Restored active matches wait up to two minutes for a seated human to

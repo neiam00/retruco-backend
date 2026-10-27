@@ -14,6 +14,9 @@ under `https://retru.co.ve/api`; the existing WebSocket proxy handles
 The `compose.voice.yaml` overlay runs coturn on the Linux backend host. Use a
 DNS-only hostname for TURN that resolves directly to that host's public IP.
 Neither Cloudflare's HTTP proxy nor NGINX can proxy this UDP service.
+Keep `origin.retru.co.ve` proxied for HTTPS and use a separate DNS-only TURN
+hostname such as `turn.retru.co.ve`. Its DNS/ICE addresses reveal the relay IP;
+if it shares the VPS, the HTTPS firewall must still prevent direct-origin access.
 
 Set these values in the backend `.env` (replace the example hostname/IP):
 
@@ -36,6 +39,11 @@ then start:
 ```sh
 docker compose -f compose.yaml -f compose.voice.yaml up -d --build
 ```
+
+Those relay ports must accept Internet clients, not just Cloudflare IP ranges.
+Retain the Cloudflare-only source restriction on HTTPS port 443. In the VPS
+deployment, add this overlay to `retruco-compose` as described in the
+[VPS deployment guide](../DEPLOYMENT-VPS.md) instead of starting a separate Compose project.
 
 For a host behind NAT, use coturn's `PUBLIC_IP/PRIVATE_IP` form for
 `VOICE_TURN_EXTERNAL_IP` and forward the same port ranges without translation.

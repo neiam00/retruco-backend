@@ -177,7 +177,7 @@ truco, stopping when the match is won. Rules view version 2 exposes team-level
 `privando` and `privoEnvido`; automatic history events have an explicit `team`
 and seat -1. The updated browser CPU also accepts version-1 views during rollout.
 
-## Production: Cloudflare Pages → NGINX → Go
+## Production: Cloudflare Pages → proxied origin → NGINX → Go
 
 For automatic deployment on pushes to `master`, see
 [GitHub Actions VPS deployment](deploy/GITHUB-ACTIONS.md).
@@ -188,12 +188,23 @@ The public frontend and API use `https://retru.co.ve` and
 `https://retru.co.ve/api`. The frontend's server hook forwards `/api/*` to a
 separate backend origin. That origin needs DNS and a valid TLS certificate.
 It is an operator-selected hostname, not the public browser API URL.
+For `origin.retru.co.ve`, use a **Proxied** A record and **Full (strict)** TLS.
+Restrict the provider firewall's inbound TCP 443 to Cloudflare's current IPv4/IPv6
+ranges; retain separate SSH and optional TURN rules. Remove broad HTTPS allows
+from every attached firewall. Docker's published ports can bypass UFW, so use
+the provider firewall as the enforcement boundary. Port 80 is not published.
 
 1. Copy `.env.production.example` to `.env.production` on the backend host.
    Set a strong URL-safe database password, the backend hostname, certificate
    directory, and a shared random `API_PROXY_SECRET` of at least 32 bytes.
-2. Put `fullchain.pem` and `privkey.pem` in `TLS_CERT_DIR`. Arrange certificate
-   renewal outside this application and reload NGINX after renewal.
+2. The base template expects `fullchain.pem` and `privkey.pem` in `TLS_CERT_DIR`.
+   The [VPS guide](DEPLOYMENT-VPS.md) instead mounts all of
+   `/etc/letsencrypt` and generates a VPS template using `live/${BACKEND_HOST}/`.
+   Follow that guide for DNS-01 issuance/renewal with `certbot-dns-cloudflare`,
+   a zone-scoped API token stored outside the container mounts, and the guarded
+   `deploy/renew-certificate.sh` hook. Do not mix the two certificate layouts.
+   The hook validates NGINX before gracefully reloading it; never stop the proxy
+   for routine renewal.
 3. Run:
 
    ```sh
@@ -208,6 +219,15 @@ It is an operator-selected hostname, not the public browser API URL.
 5. Verify `https://retru.co.ve/api/health`, then register/login, create a private
    table, join from a second browser, play, reconnect, and check match history.
    A direct backend request without the shared secret must return 403.
+   Through the proxied hostname this must be the app's JSON response, not a
+   Cloudflare challenge. A request forced to the droplet IP from outside
+   Cloudflare must fail to connect, even with the correct TLS hostname.
+
+Bypass Cloudflare caching for the origin hostname and the public API; ensure
+Pages-to-origin requests do not receive browser challenges. Keep WebSockets
+enabled. `BACKEND_ORIGIN` and the shared-secret/client-IP forwarding remain
+unchanged. Use the droplet IP or a separate DNS-only hostname for SSH, never
+the proxied origin hostname. The CI guide describes fixed-egress runner setup.
 
 NGINX forwards WebSocket upgrades and disables buffering and access logs. Go
 sends heartbeats more frequently than the proxy's idle timeout. The edge replaces
