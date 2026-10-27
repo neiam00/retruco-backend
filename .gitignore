@@ -7,3 +7,5 @@
 .DS_Store
 __pycache__/
 *.pyc
+/RULES-DECISIONS.md
+/VERIFICATION.md

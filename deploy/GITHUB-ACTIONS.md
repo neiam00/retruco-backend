@@ -4,10 +4,12 @@ The workflow in `.github/workflows/deploy-vps.yml` deploys this **backend reposi
 on pushes to **`master`**, and supports **Actions → Deploy backend to VPS → Run workflow**.
 Manual runs also require `master`. The frontend keeps its separate Cloudflare Pages deployment.
 
+The hostnames in this guide are examples. Replace them with your own. The workflow and deployment scripts have installation-specific defaults: update the workflow environment URL and arrange for `RETRUCO_HEALTH_URL` to reach your public `/api/health` endpoint when the remote script runs. The certificate hook also needs your certificate lineage as its first argument.
+
 ## One-time prerequisites
 
 Complete the [VPS deployment guide](../DEPLOYMENT-VPS.md) first: Docker/Compose, working DNS and TLS for
-the proxied `origin.retru.co.ve`, the database, API, NGINX, and Pages must already
+the proxied `origin.example.com`, the database, API, NGINX, and Pages must already
 be configured. Use Full (strict) TLS and DNS-01 renewal; the provider firewall
 allows HTTPS only from Cloudflare. Routine certificate renewal gracefully
 reloads NGINX using the guarded `deploy/renew-certificate.sh` deploy hook.
@@ -21,13 +23,14 @@ The expected server paths are:
 - `/opt/retruco/backend/deploy/nginx.vps.conf.template`
 - `/usr/local/sbin/retruco-compose`
 
+Create the helper and VPS-specific Compose and NGINX files for your installation.
 The helper must use the `retruco` Compose project and the production files from
-that directory, as in the VPS guide. Voice uses Cloudflare Realtime TURN.
+that directory. Voice uses Cloudflare Realtime TURN.
 If the helper still includes `compose.voice.yaml`, complete [the Coturn migration](VOICE.md#migrate-from-local-coturn) first; deployment aborts before replacing source when it detects that service.
 
 The SSH user must be able to run Docker, execute the helper, and write
-`/opt/retruco/backend` and `/opt/retruco/backups`. The fresh-VPS guide uses `root`,
-which is the default here. The server needs `bash`, `rsync`, `tar`, `curl`, and
+`/opt/retruco/backend` and `/opt/retruco/backups`. The workflow defaults to
+`root`. The server needs `bash`, `rsync`, `tar`, `curl`, and
 `flock` (provided by `util-linux` on Ubuntu). Keep inbound SSH available to the
 runner separately from the Cloudflare-only HTTPS rule. The HTTPS source list
 does not grant the runner SSH access.
@@ -57,7 +60,7 @@ under **Settings → Environments**. Add these environment secrets there
 
 | Secret | Required? | Value |
 | --- | --- | --- |
-| `VPS_HOST` | Yes | Droplet IPv4 address or a separate **DNS-only** SSH hostname, without a scheme or path; never the proxied `origin.retru.co.ve` |
+| `VPS_HOST` | Yes | Droplet IPv4 address or a separate **DNS-only** SSH hostname, without a scheme or path; never the proxied `origin.example.com` |
 | `VPS_SSH_PRIVATE_KEY` | Yes | Complete private SSH key, including its BEGIN/END lines; dedicated unencrypted key for CI |
 | `VPS_KNOWN_HOSTS` | Yes | Verified SSH known-hosts entry matching `VPS_HOST` and the SSH port |
 | `VPS_USER` | No | SSH username; defaults to `root` |
@@ -102,7 +105,7 @@ again after a future reset.
 VPS's `.env.production`. No B2, Cloudflare API, or container-registry token is
 needed **by this workflow**. The DNS-01 token remains in the root-only Certbot
 credentials file on the VPS, outside the application and its container mounts.
-Pages must already have `BACKEND_ORIGIN=https://origin.retru.co.ve` and
+Pages must already have `BACKEND_ORIGIN=https://origin.example.com` and
 the matching `API_PROXY_SECRET`.
 
 ## What a deployment does
@@ -128,7 +131,7 @@ the matching `API_PROXY_SECRET`.
 7. Starts the new API, checks it locally using the existing proxy secret,
    and recreates NGINX. TURN credentials are issued by the API through Cloudflare;
    no relay container is deployed.
-8. Checks `https://retru.co.ve/api/health` with a unique deployment query to avoid
+8. Checks `https://example.com/api/health` with a unique deployment query to avoid
    cached responses, and records the deployed SHA in
    `/opt/retruco/backend/.deployed-revision`. The workflow independently verifies
    that marker. An early script exit cannot be reported as a successful deployment.
@@ -203,17 +206,9 @@ replace a browser check of login, gameplay, and WebSockets.
 
 For a manually customized installation, `deploy/deploy-vps.sh` accepts environment
 overrides `RETRUCO_DEPLOY_DIR`, `RETRUCO_COMPOSE`, and `RETRUCO_HEALTH_URL`.
-The workflow uses the defaults from the VPS guide.
+The workflow invokes the remote script without these overrides; customize the remote invocation or script defaults for your installation before enabling automatic deployment.
 
-After adding secrets, commit and push the workflow, script, and tests to `master`.
-Watch the first run under **Actions**. No secrets have been configured, workflow
-pushed, or live deployment executed as part of creating these files.
-
-Local validation passed: Actions syntax (`actionlint`), shell syntax, ten deployment
-tests, `go test ./...`, and `go vet ./...`. The deployment tests use real file
-synchronization with simulated external services. The Docker-based CI step was
-not run locally because the local Docker socket was inaccessible; the first
-Actions run will exercise that container build and test gate.
+After configuring the workflow and secrets, verify the first run under **Actions**.
 
 References: [GitHub secrets](https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/use-secrets),
 [deployment concurrency](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency).

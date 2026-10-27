@@ -1,32 +1,31 @@
 # Retruco backend
 
-Authoritative Venezuelan Truco rules and multiplayer API. The frontend lives in
-[retruco-webapp](https://github.com/neiam00/retruco-webapp). P0 supports two or four
-players, accounts and guests, public/private tables, spectators, chat, señas,
-server deadlines, and persisted matches. Voice and CPU games are deferred to P1.
+The server and rules engine for Venezuelan Truco. It supports two- and
+four-player matches, guests and accounts, public and private tables,
+spectators, chat, voice signaling, and CPU opponents. The
+[web client](https://github.com/neiam00/retruco-webapp) provides the interface.
 
-## Local development
+## Getting started
 
-Requirements: Go 1.27.2+, Docker with Compose, and PostgreSQL 18.
+Requirements: Go 1.27.3 or later, Docker with Compose, and PostgreSQL 18.
 
-1. Copy `.env.example` to `.env` and choose a local URL-safe database password.
-   Keep the password in `DATABASE_URL` consistent with `POSTGRES_PASSWORD`.
-2. Run `docker compose up -d db`.
-3. Run `APP_ENV=development go run ./cmd/migrate up`.
-4. Run `make dev` (equivalent to `APP_ENV=development go run ./cmd/server`).
-5. Start the frontend at `http://127.0.0.1:5173`. Its Vite proxy forwards `/api`
-   and WebSockets to `127.0.0.1:8080`.
+1. Copy `.env.example` to `.env`. Choose a local URL-safe password and use it in
+   both `POSTGRES_PASSWORD` and `DATABASE_URL`.
+2. Start PostgreSQL: `docker compose up -d db`.
+3. Apply migrations: `APP_ENV=development go run ./cmd/migrate up`.
+4. Start the API: `make dev`.
+5. Start the frontend at `http://127.0.0.1:5173`; its development proxy forwards
+   `/api` and WebSocket connections to `127.0.0.1:8080`.
 
-The server and migration command load only `.env` from the current working
-directory when `APP_ENV=development` is set in the process environment.
-Existing environment variables take precedence, including empty values.
-A missing `.env` is allowed; an unreadable or malformed file stops startup.
-`.env.example` is never loaded. Without `APP_ENV=development`, configuration
-comes entirely from the process environment.
+The server and migration command load `.env` from the working directory only
+when `APP_ENV=development` is set. Process environment variables take
+precedence. Alternatively, `docker compose up --build` starts the database,
+migrations, and API together. Keep database volumes when you need their data.
 
-Alternatively, `docker compose up --build` runs the database, migrations, and API
-together. PostgreSQL and the API bind only to loopback on the host. Never use
-`docker compose down -v` on a database whose contents you need to keep.
+Login and registration require backend Turnstile keys; guests can play without
+them. Voice can use direct browser connections locally; configure the optional
+TURN credentials for production relay. See `.env.example` and the
+[voice guide](deploy/VOICE.md).
 
 ## Checks
 
@@ -34,259 +33,31 @@ together. PostgreSQL and the API bind only to loopback on the host. Never use
 go test -race ./...
 go vet ./...
 golangci-lint run ./...
-GOOS=js GOARCH=wasm go test -exec="$(go env GOROOT)/lib/wasm/go_js_wasm_exec" ./rules
+make test-wasm
 ```
 
-The PostgreSQL integration test is opt-in and creates real test users and
-matches. Point `DATABASE_TEST_URL` at a **disposable**, migrated database, then
-run `go test -race ./internal/api -run TestAccountAndMatchPersistence -count=1`.
-Without that variable the integration test reports a skip, not a database pass.
-The shared rules tests run under both native Go and the Go JavaScript/WASM test
-runner; Node must be installed for the latter.
+The WASM tests require Node. PostgreSQL integration tests require a **disposable**
+migrated database supplied in `DATABASE_TEST_URL`; otherwise they are skipped.
 
-## Architecture and privacy
+## Architecture
 
-Players may send `{"type":"burn","card":1}` on their card turn in the second
-or third round. The selected card is consumed, stays face down in every public
-table view, and cannot win the round. During mandatory pegado, `{"type":"burn"}`
-burns both remaining cards. Normal flor declarations still apply through the
-`declaration` field, including `flor_flor` for the two-card burn. Timeouts keep
-their existing declaration behavior.
+- `rules` contains the deterministic game engine; the host supplies shuffled
+  decks and timeout choices.
+- `internal/game` manages matches, persistence, deadlines, and views filtered
+  for each player. CPU moves are validated by the server.
+- `internal/api` provides HTTP and WebSocket endpoints, sessions, origin checks,
+  and voice signaling.
+- `internal/store` persists users, sessions, and match snapshots in PostgreSQL.
+- `cpu` contains the policy compiled to WASM for CPU-controlled seats. Run
+  `make browser-engine` to build the module and its matching Go runtime together.
 
-CPU rooms accept `options.cpuSeats` when creating a match: `[1]` for 1v1, or
-any distinct subset of seats 1–3 for 2v2. Seat 0 belongs to the creator; all
-unselected seats remain available to humans. Teams are alternating seats.
-Listings include `cpuPlayers`; snapshots expose `cpuController` (a seat, or
-`-1`) and `cpuPaused`. These choices survive restart with the match snapshot.
+Run a single API instance: match ownership and WebSocket subscriptions live in
+that process, while PostgreSQL provides durability across restarts. Scaling to
+multiple instances requires distributed ownership and routing.
 
-Each game WebSocket receives a separate `cpu` envelope. Only the designated
-human connection receives `controlled: true` and the next CPU's authorized
-`view`, `seat`, and protocol `version`. Submit its chosen command as an ordinary
-`input` with `cpuSeat`, `revision`, and a unique `id`. The server binds authority
-to the connection and validates the move against the authoritative engine.
-Spectators and other tabs never receive that work. On disconnect, control moves
-to another connected human; rooms without connected humans wait without
-advancing their deadline. Voice connections do not count as CPU controllers.
+## Deployment
 
-The `cpu` package is a bounded heuristic policy over a single authorized view.
-It cannot accept the secret `rules.State`. `make browser-engine` builds
-`bin/browser-engine/cpu.wasm` and its matching `wasm_exec.js` runtime. They must
-be shipped together by the frontend and loaded in one dedicated Worker only
-when that connection controls CPU players. The Worker calls the exported
-`retrucoCPUDecide` with a JSON `cpu.Request` and receives a JSON `cpu.Response`.
-Both protocol and rules versions are checked before choosing a move.
-`make test-wasm` runs the shared rules and CPU simulations with Go's Node/WASM
-runner; the same policy tests run natively under `go test`.
-The initial Go 1.27.2 artifact is 4,419,352 bytes (1,231,593 bytes with gzip);
-its matching JavaScript runtime is 16,992 bytes (4,356 bytes with gzip).
-Browser startup, memory, and decision latency still need measurement when the
-frontend Worker is integrated; native/WASM test times are not mobile benchmarks.
-
-- `rules` is deterministic Go without network, clock, database, or random APIs.
-  Hosts supply shuffled decks and random timeout choices. See
-  [RULES-DECISIONS.md](RULES-DECISIONS.md) for clarified game rules.
-- `internal/game` owns matches, serializes commands, validates revisions and
-  command IDs, persists accepted moves, and sends perspective-filtered snapshots.
-  Hidden hands and concealed pegado cards are filtered before JSON transmission.
-- `internal/api` handles username/password login, HttpOnly cookies, exact-origin
-  checks, rate limits, and WebSocket connections. Passwords use bcrypt; only
-  session-token hashes are stored.
-- `internal/store` persists users, sessions and match snapshots in PostgreSQL.
-  Chat remains in snapshots by the user's explicit override; application logs
-  must not include chat text, passwords, cookies, or proxy secrets.
-
-Run **one API instance**. Match ownership and WebSocket subscriptions are local
-to that process; PostgreSQL supplies durability across restarts. Redis would not
-solve cross-instance ownership by itself and is unnecessary for this P0 topology.
-Do not scale replicas until match routing and distributed ownership are designed.
-
-Each room serializes its own actions, persistence, connections and subscriptions.
-A slow write blocks only that room; the shared registry lock covers short
-in-memory updates, and the lobby reads cached committed listings. Due timers run
-independently per room, with at most one timer operation per room and shutdown
-waiting for outstanding timer work. Concurrent room creation reserves capacity
-before persistence, so the 1,000-active-table limit includes pending creations.
-
-Ordinary moves persist with one atomic match update. Migration 00002 separates
-retained chat/canto history so unchanged history is neither encoded nor rewritten
-on each move. See [capacity changes and migration rollback](deploy/CAPACITY.md).
-Creation and newly seated
-humans still write membership and state in one transaction; leaving does not
-remove historical membership. Session validation uses a 4,096-entry LRU cache
-for up to 30 seconds, bounded by the database session expiration. Concurrent
-lookups for one token share a database read. Successful logout immediately
-invalidates that token and any in-flight lookup before returning, so the next
-HTTP or WebSocket authorization rejects the old cookie. Direct database changes
-or revocations outside this API instance may take up to 30 seconds to appear;
-multiple API instances would require coordinated invalidation.
-
-Unstarted tables are deleted when their last connected human leaves explicitly. When all
-seated humans disconnect, there is a 10-second grace period for a page refresh
-or brief connection loss. Another connected tab keeps the room alive;
-spectators and CPU seats do not. This applies to both waiting and started rooms,
-including CPU games. Newly created rooms and restored waiting lobbies also have
-10 seconds for a player to connect. Restored active matches instead wait up to
-2 minutes for a seated human, with their turn clocks paused until that player
-returns. They then receive a fresh 30-second card/canto window (5 seconds between
-hands). Saved cards, scores, turns, revisions, command IDs, and canto history are
-retained. Ordinary reconnects and duplicate commands do not renew human turn
-deadlines. Waiting rooms and their memberships are deleted. Started
-games are archived as abandoned, preserving account history without assigning a
-winner; their rooms cannot be joined or restored after a restart.
-`GET /api/matches/events` streams public room-list updates to open browsers.
-Connected players retain the normal turn timers and forfeit behavior.
-Completed matches do not consume the active-table capacity.
-
-Before an automatic VPS restart, the deployment script pauses play and broadcasts
-an update notice for 10 seconds. Match snapshots expose optional `updating`
-metadata; the browser keeps the notice visible through transient API failures,
-reconnects automatically, and clears it on the replacement API's first snapshot.
-Card/canto and vacant-room timers pause during the announcement. Cancelling the
-deployment before shutdown clears the notice and renews the deadlines. The
-operator endpoint is `/internal/deployment`, restricted to the container's real
-loopback address and the existing proxy secret; public forwarded headers cannot
-authorize it. No new secrets are required.
-
-Joining players choose a vacant seat in the waiting room. `POST /api/matches/{code}/join`
-accepts `{ "seat": 2 }` with a zero-based index; seats 0 and 2 share a team, as do
-seats 1 and 3. The server reserves the seat atomically and rejects occupied or
-out-of-range choices. Older clients that omit `seat` receive the first vacancy.
-Leaving a waiting room frees that seat without moving anyone else.
-Registered users' `/api/history` includes their `team` and a `players` roster
-with each player's name, seat, team, and CPU flag, alongside the scores and winner.
-The team is -1 when an older snapshot cannot identify the user's seat.
-
-Accepted envido reveals comparison values at settlement; concealed cards stay
-concealed. These behaviors follow the direct user clarifications.
-
-Public cantos, declarations, and replies are retained for the entire match,
-including their hand and calling seat. Reconnecting clients receive this history
-grouped by hand in the interface. Older saved matches can recover only the recent
-events they already retained; discarded events from earlier hands cannot be rebuilt.
-
-At the next deal, a team one point from the target is **privando**. The server
-announces only its highest envido and pauses play for a fixed, unraiseable
-2-point envido. Accepting (`Privo y Truco`) leaves normal truco betting available;
-refusal or timeout awards the caller 1 point and ends the match. A privando
-team's flor wins immediately. The opposing flor holder may present it for
-exactly 3 points and end the hand without envido/truco, or play and retain flor
-under the usual declaration rules. If both teams priva, both announce and the
-envido is automatically accepted; normal envido tie order applies, and mano's
-team wins simultaneous flores. Played privo hands score envido, then flor, then
-truco, stopping when the match is won. Rules view version 2 exposes team-level
-`privando` and `privoEnvido`; automatic history events have an explicit `team`
-and seat -1. The updated browser CPU also accepts version-1 views during rollout.
-
-## Production: Cloudflare Pages → proxied origin → NGINX → Go
-
-For automatic deployment on pushes to `master`, see
-[GitHub Actions VPS deployment](deploy/GITHUB-ACTIONS.md).
-
-For voice signaling and Cloudflare Realtime TURN, see [voice deployment](deploy/VOICE.md).
-
-The public frontend and API use `https://retru.co.ve` and
-`https://retru.co.ve/api`. The frontend's server hook forwards `/api/*` to a
-separate backend origin. That origin needs DNS and a valid TLS certificate.
-It is an operator-selected hostname, not the public browser API URL.
-For `origin.retru.co.ve`, use a **Proxied** A record and **Full (strict)** TLS.
-Restrict the provider firewall's inbound TCP 443 to Cloudflare's current IPv4/IPv6
-ranges; retain separate administrative SSH rules. Managed TURN needs no inbound relay ports. Remove broad HTTPS allows
-from every attached firewall. Docker's published ports can bypass UFW, so use
-the provider firewall as the enforcement boundary. Port 80 is not published.
-
-1. Copy `.env.production.example` to `.env.production` on the backend host.
-   Set a strong URL-safe database password, the backend hostname, certificate
-   directory, and a shared random `API_PROXY_SECRET` of at least 32 bytes.
-2. The base template expects `fullchain.pem` and `privkey.pem` in `TLS_CERT_DIR`.
-   The [VPS guide](DEPLOYMENT-VPS.md) instead mounts all of
-   `/etc/letsencrypt` and generates a VPS template using `live/${BACKEND_HOST}/`.
-   Follow that guide for DNS-01 issuance/renewal with `certbot-dns-cloudflare`,
-   a zone-scoped API token stored outside the container mounts, and the guarded
-   `deploy/renew-certificate.sh` hook. Do not mix the two certificate layouts.
-   The hook validates NGINX before gracefully reloading it; never stop the proxy
-   for routine renewal.
-3. Run:
-
-   ```sh
-   docker compose --env-file .env.production -f compose.yaml -f compose.production.yaml config --quiet
-   docker compose --env-file .env.production -f compose.yaml -f compose.production.yaml up -d --build
-   ```
-
-4. In Cloudflare Pages, set server-only runtime `BACKEND_ORIGIN` to
-   `https://<your-backend-host>` and `API_PROXY_SECRET` to the identical value.
-   Keep public `API_ORIGIN` empty. Production allows only `https://retru.co.ve`
-   as a browser origin; preview domains need an explicitly configured allowance.
-5. Verify `https://retru.co.ve/api/health`, then register/login, create a private
-   table, join from a second browser, play, reconnect, and check match history.
-   A direct backend request without the shared secret must return 403.
-   Through the proxied hostname this must be the app's JSON response, not a
-   Cloudflare challenge. A request forced to the droplet IP from outside
-   Cloudflare must fail to connect, even with the correct TLS hostname.
-
-Bypass Cloudflare caching for the origin hostname and the public API; ensure
-Pages-to-origin requests do not receive browser challenges. Keep WebSockets
-enabled. `BACKEND_ORIGIN` and the shared-secret/client-IP forwarding remain
-unchanged. Use the droplet IP or a separate DNS-only hostname for SSH, never
-the proxied origin hostname. The CI guide describes fixed-egress runner setup.
-
-NGINX forwards WebSocket upgrades and disables buffering and access logs. Go
-sends heartbeats more frequently than the proxy's idle timeout. The edge replaces
-visitor-IP forwarding headers, and Go trusts them only after authenticating the
-shared secret. Set `COOKIE_SECURE=true` in every HTTPS deployment. Keep port 8080
-and the database private; expose only NGINX's TLS endpoint.
-
-Back up PostgreSQL before upgrades. Apply migrations before starting the new API;
-restore the backup if a schema rollback would lose data. Match snapshots include
-hidden hands, so treat database backups as private. No hosting, DNS, certificate,
-or secret is provisioned by these files.
-
-## B2 card publishing
-
-Use an existing bucket and an application key restricted to writing its card
-prefix. Export `B2_APPLICATION_KEY_ID`, `B2_APPLICATION_KEY`, and `B2_BUCKET_NAME`
-only in the operator's shell, then run:
-
-```sh
-go run ./cmd/upload-assets ../frontend/static/cards
-```
-
-Run `pnpm cards:build` in the frontend after editing its `artwork/cards/*.svg` sources.
-The SDK uploader expects the 40 generated WebP faces and one back, writes
-`cards/*`, and sets `image/webp`. Upload these files before deploying a frontend
-that references their content-hashed filenames. Older object versions can remain
-available for clients still using the previous deployment.
-Card objects use `Cache-Control: public, max-age=31536000, immutable`. Always
-upload artwork changes under their newly generated content-hashed filenames;
-never overwrite an existing card URL with different bytes. Re-uploading existing
-generated files applies the policy to a bucket that still has older metadata.
-Keep the upstream attribution accessible alongside the deployed app. Configure
-the frontend's public `CARD_ASSET_ORIGIN` with the bucket/CDN origin and rebuild.
-Leave it empty to serve the bundled assets. Never place B2 keys in the frontend.
-
-
-## Turnstile account verification
-
-Set `TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY` in `.env` for `make dev`, or
-in the production environment file used by Docker Compose. Both are passed to
-the API container; no frontend rebuild is required to rotate them. Configure a
-Managed widget allowing the frontend hostname and keep `ALLOWED_ORIGINS` aligned
-with those public frontend origins. The secret is never exposed to clients.
-
-The API exposes only the public site key at `GET /api/turnstile` (`/api/registration` remains as a compatibility alias). Login and registration
-require `turnstileToken`; Siteverify must return success, the matching `login` or `register` action, and
-an allowed hostname before credential lookup/password comparison, account creation, or a session.
-Requests fail closed when keys are missing, tokens are rejected, or verification
-is unavailable. Guest creation does not use Turnstile. Each login attempt needs a fresh token,
-even after incorrect credentials; registration tokens cannot be used to log in.
-
-For disposable local/browser tests, Cloudflare provides site key
-`1x00000000000000000000AA`, secret `1x0000000000000000000000000000000AA`, and token
-`XXXX.DUMMY.TOKEN.XXXX`. Cloudflare returns synthetic metadata for these test credentials. Only this exact
-public pair and token with `APP_ENV=development` use its success flag without
-widget metadata checks. Real keys and production always require the configured
-hostname and matching action. Never configure dummy keys in production.
-
-Go handler tests use an injected HTTP transport to exercise rejection, expiry,
-wrong hostname/action, network failure, and successful account creation without
-contacting Cloudflare. `DATABASE_TEST_URL` enables the disposable PostgreSQL
-account/session persistence integration test.
+See the [VPS deployment guide](DEPLOYMENT-VPS.md),
+[automated deployment notes](deploy/GITHUB-ACTIONS.md), and
+[capacity and migration notes](deploy/CAPACITY.md). Review deployment-specific
+hostnames and defaults before using the supplied configuration and scripts.
