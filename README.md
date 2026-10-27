@@ -60,7 +60,9 @@ multiple instances requires distributed ownership and routing.
 See the [VPS deployment guide](DEPLOYMENT-VPS.md),
 [automated deployment notes](deploy/GITHUB-ACTIONS.md), and
 [capacity and migration notes](deploy/CAPACITY.md). Review deployment-specific
-hostnames and defaults before using the supplied configuration and scripts.
+paths and configuration before using the supplied scripts. Production Compose
+reads frontend origins from `ALLOWED_ORIGINS` in the private environment file;
+the backend hostname is configured with `BACKEND_HOST`.
 
 ## License
 

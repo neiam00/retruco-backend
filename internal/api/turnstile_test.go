@@ -50,15 +50,15 @@ func TestRegistrationRequiresVerifiedTurnstile(t *testing.T) {
 		dummyKeys   bool
 		development bool
 	}{
-		{name: "valid", token: "valid-token", response: `{"success":true,"hostname":"retru.co.ve","action":"register"}`, status: 200, wantStatus: 200, wantCalls: 1},
+		{name: "valid", token: "valid-token", response: `{"success":true,"hostname":"cards.example.test","action":"register"}`, status: 200, wantStatus: 200, wantCalls: 1},
 		{name: "development test keys", token: "XXXX.DUMMY.TOKEN.XXXX", response: `{"success":true,"hostname":"example.com"}`, status: 200, wantStatus: 200, wantCalls: 1, dummyKeys: true, development: true},
 		{name: "production rejects test action", token: "XXXX.DUMMY.TOKEN.XXXX", response: `{"success":true,"hostname":"example.com"}`, status: 200, wantStatus: 403, wantCalls: 1, dummyKeys: true},
-		{name: "development real keys require register action", token: "token", response: `{"success":true,"hostname":"retru.co.ve","action":"test"}`, status: 200, wantStatus: 403, wantCalls: 1, development: true},
+		{name: "development real keys require register action", token: "token", response: `{"success":true,"hostname":"cards.example.test","action":"test"}`, status: 200, wantStatus: 403, wantCalls: 1, development: true},
 		{name: "missing token", wantStatus: 403},
 		{name: "oversized token", token: strings.Repeat("a", 2049), wantStatus: 403},
 		{name: "expired or reused", token: "old-token", response: `{"success":false,"error-codes":["timeout-or-duplicate"]}`, status: 200, wantStatus: 403, wantCalls: 1},
 		{name: "wrong hostname", token: "token", response: `{"success":true,"hostname":"attacker.example","action":"register"}`, status: 200, wantStatus: 403, wantCalls: 1},
-		{name: "wrong action", token: "token", response: `{"success":true,"hostname":"retru.co.ve","action":"login"}`, status: 200, wantStatus: 403, wantCalls: 1},
+		{name: "wrong action", token: "token", response: `{"success":true,"hostname":"cards.example.test","action":"login"}`, status: 200, wantStatus: 403, wantCalls: 1},
 		{name: "empty response", token: "token", response: `{}`, status: 200, wantStatus: 403, wantCalls: 1},
 		{name: "malformed response", token: "token", response: `broken`, status: 200, wantStatus: 503, wantCalls: 1},
 		{name: "service error", token: "token", response: `{}`, status: 500, wantStatus: 503, wantCalls: 1},
@@ -89,14 +89,14 @@ func TestRegistrationRequiresVerifiedTurnstile(t *testing.T) {
 			config.Client = client
 			repository := &registrationStore{}
 			server, err := api.New(t.Context(), api.Config{
-				Origins:   []string{"https://retru.co.ve", "http://localhost:5173"},
+				Origins:   []string{"https://cards.example.test", "http://localhost:5173"},
 				Turnstile: config,
 			}, repository, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
 			require.NoError(t, err)
 			body, err := json.Marshal(map[string]string{"username": "player", "password": "valid-password", "turnstileToken": scenario.token})
 			require.NoError(t, err)
 			request := httptest.NewRequest(http.MethodPost, "/api/register", strings.NewReader(string(body)))
-			request.Header.Set("Origin", "https://retru.co.ve")
+			request.Header.Set("Origin", "https://cards.example.test")
 			request.Header.Set("Content-Type", "application/json")
 			response := httptest.NewRecorder()
 			server.Handler().ServeHTTP(response, request)
@@ -127,7 +127,7 @@ func TestTurnstileConfigExposesOnlyPublicKeyAndMissingKeysFailClosed(t *testing.
 		{name: "missing site key", config: api.TurnstileConfig{SecretKey: "secret-key"}, status: 503},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
-			server, err := api.New(t.Context(), api.Config{Origins: []string{"https://retru.co.ve"}, Turnstile: scenario.config}, nil, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+			server, err := api.New(t.Context(), api.Config{Origins: []string{"https://cards.example.test"}, Turnstile: scenario.config}, nil, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
 			require.NoError(t, err)
 			handler := server.Handler()
 			response := httptest.NewRecorder()
@@ -144,7 +144,7 @@ func TestTurnstileConfigExposesOnlyPublicKeyAndMissingKeysFailClosed(t *testing.
 				return
 			}
 			request := httptest.NewRequest(http.MethodPost, "/api/register", strings.NewReader(`{"username":"player","password":"valid-password","turnstileToken":"anything"}`))
-			request.Header.Set("Origin", "https://retru.co.ve")
+			request.Header.Set("Origin", "https://cards.example.test")
 			request.Header.Set("Content-Type", "application/json")
 			response = httptest.NewRecorder()
 			handler.ServeHTTP(response, request)
@@ -179,12 +179,12 @@ func TestLoginRequiresVerifiedTurnstileBeforeCheckingCredentials(t *testing.T) {
 	}{
 		{name: "missing token", wantStatus: 403},
 		{name: "expired or reused token", token: "old-token", response: `{"success":false,"error-codes":["timeout-or-duplicate"]}`, wantStatus: 403},
-		{name: "registration token cannot log in", token: "register-token", response: `{"success":true,"hostname":"retru.co.ve","action":"register"}`, wantStatus: 403},
+		{name: "registration token cannot log in", token: "register-token", response: `{"success":true,"hostname":"cards.example.test","action":"register"}`, wantStatus: 403},
 		{name: "wrong hostname", token: "token", response: `{"success":true,"hostname":"attacker.example","action":"login"}`, wantStatus: 403},
 		{name: "verification unavailable", token: "token", unavailable: true, wantStatus: 503},
 		{name: "missing keys", token: "token", missingKeys: true, wantStatus: 503},
-		{name: "wrong password after verification", token: "valid-token", response: `{"success":true,"hostname":"retru.co.ve","action":"login"}`, password: "wrong-password", wantStatus: 401, wantLookups: 1},
-		{name: "verified login", token: "valid-token", response: `{"success":true,"hostname":"retru.co.ve","action":"login"}`, wantStatus: 200, wantLookups: 1},
+		{name: "wrong password after verification", token: "valid-token", response: `{"success":true,"hostname":"cards.example.test","action":"login"}`, password: "wrong-password", wantStatus: 401, wantLookups: 1},
+		{name: "verified login", token: "valid-token", response: `{"success":true,"hostname":"cards.example.test","action":"login"}`, wantStatus: 200, wantLookups: 1},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			repository := &loginStore{passwordHash: string(hash)}
@@ -200,7 +200,7 @@ func TestLoginRequiresVerifiedTurnstileBeforeCheckingCredentials(t *testing.T) {
 			if scenario.missingKeys {
 				config = api.TurnstileConfig{}
 			}
-			server, err := api.New(t.Context(), api.Config{Origins: []string{"https://retru.co.ve"}, Turnstile: config}, repository, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+			server, err := api.New(t.Context(), api.Config{Origins: []string{"https://cards.example.test"}, Turnstile: config}, repository, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
 			require.NoError(t, err)
 			password := scenario.password
 			if password == "" {
@@ -213,7 +213,7 @@ func TestLoginRequiresVerifiedTurnstileBeforeCheckingCredentials(t *testing.T) {
 			payload, err := json.Marshal(body)
 			require.NoError(t, err)
 			request := httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(string(payload)))
-			request.Header.Set("Origin", "https://retru.co.ve")
+			request.Header.Set("Origin", "https://cards.example.test")
 			request.Header.Set("Content-Type", "application/json")
 			response := httptest.NewRecorder()
 			server.Handler().ServeHTTP(response, request)

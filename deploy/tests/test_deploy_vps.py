@@ -20,7 +20,7 @@ class DeploymentTests(unittest.TestCase):
         self.app = self.root / "backend"
         (self.app / "deploy").mkdir(parents=True)
         self.protected = {
-            ".env.production": "private server values\n",
+            ".env.production": "ALLOWED_ORIGINS=https://cards.example.test,https://other.example.test\n",
             "compose.vps.yaml": "operator override\n",
             "deploy/nginx.vps.conf.template": "certificate config\n",
             ".deployed-revision": "previous-revision\n",
@@ -44,6 +44,10 @@ if [[ "$*" == *"/internal/deployment"* ]]; then
   exec sh -c "$6" "$7" "${@:8}"
 fi
 case "$*" in
+  "exec -T api printenv ALLOWED_ORIGINS")
+    [[ "${MOCK_FAIL:-}" != origins ]] || exit 1
+    printf '%s\\n' "$MOCK_ALLOWED_ORIGINS"
+    ;;
   "config --services")
     printf 'db\\nmigrate\\napi\\nproxy\\n'
     if [[ "${MOCK_FAIL:-}" == legacy-turn ]]; then printf 'turn\\n'; fi
@@ -90,6 +94,7 @@ esac
             self.bin / "curl",
             """#!/bin/sh
 printf 'public-health\\n' >> "$MOCK_LOG"
+printf 'public-health-url:%s\\n' "$*" >> "$MOCK_LOG"
 test "${MOCK_FAIL:-}" != public-health
 """,
         )
@@ -110,6 +115,7 @@ test "${MOCK_FAIL:-}" != public-health
             "RETRUCO_DEPLOY_DIR": str(self.app),
             "RETRUCO_COMPOSE": str(self.compose),
             "MOCK_LOG": str(self.log),
+            "MOCK_ALLOWED_ORIGINS": "https://cards.example.test,https://other.example.test",
         }
 
     @staticmethod
@@ -170,6 +176,43 @@ test "${MOCK_FAIL:-}" != public-health
         self.assertNotIn("run --rm --no-deps migrate", self.events)
         self.assertNotIn('notice:{"updating":true}', self.events)
         self.assert_server_files_preserved()
+
+    def test_legacy_installation_preserves_running_origins_before_source_update(self):
+        env_file = self.app / ".env.production"
+        env_file.write_text("# private server values\n")
+        result = self.deploy()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            env_file.read_text(),
+            "# private server values\n\nALLOWED_ORIGINS=https://cards.example.test,https://other.example.test\n",
+        )
+        self.assertIn("Preserved installed frontend origins", result.stdout)
+        self.assertTrue(any(event.endswith(" https://cards.example.test/api/health") for event in self.events))
+
+    def test_custom_health_url_does_not_require_running_origin_lookup(self):
+        self.env["RETRUCO_HEALTH_URL"] = "https://another.example.test/api/health"
+        result = self.deploy("origins")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("exec -T api printenv ALLOWED_ORIGINS", self.events)
+        self.assertTrue(any(event.endswith(" https://another.example.test/api/health") for event in self.events))
+
+    def test_missing_running_origins_blocks_before_replacing_source(self):
+        result = self.deploy("origins")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertTrue((self.app / "obsolete.go").exists())
+        self.assertNotIn("build api migrate", self.events)
+        self.assertNotIn("stop api", self.events)
+        self.assert_server_files_preserved()
+
+    def test_origin_migration_rejects_multiline_values_before_writing_env(self):
+        self.env["MOCK_ALLOWED_ORIGINS"] = "https://cards.example.test\nUNEXPECTED=value"
+        env_file = self.app / ".env.production"
+        env_file.write_text("# private server values\n")
+        result = self.deploy()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(env_file.read_text(), "# private server values\n")
+        self.assertTrue((self.app / "obsolete.go").exists())
+        self.assertNotIn("stop api", self.events)
 
     def test_legacy_turn_overlay_blocks_before_source_or_service_changes(self):
         result = self.deploy("legacy-turn")

@@ -36,7 +36,6 @@ jobs:
           --health-retries 20
     environment:
       name: production
-      url: https://retru.co.ve
     defaults:
       run:
         shell: bash

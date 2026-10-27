@@ -4,7 +4,12 @@ The workflow in `.github/workflows/deploy-vps.yml` deploys this **backend reposi
 on pushes to **`master`**, and supports **Actions → Deploy backend to VPS → Run workflow**.
 Manual runs also require `master`. The frontend keeps its separate Cloudflare Pages deployment.
 
-The hostnames in this guide are examples. Replace them with your own. The workflow and deployment scripts have installation-specific defaults: update the workflow environment URL and arrange for `RETRUCO_HEALTH_URL` to reach your public `/api/health` endpoint when the remote script runs. The certificate hook also needs your certificate lineage as its first argument.
+The hostnames in this guide are examples. Replace them with your own. Configure
+`BACKEND_HOST` and `ALLOWED_ORIGINS` in the server's private `.env.production`.
+The public health check defaults to the running API's first allowed origin plus
+`/api/health`; set `RETRUCO_HEALTH_URL` in the remote script's environment to
+override it. The certificate hook can infer its lineage from the running proxy's
+`BACKEND_HOST`, or accept an explicit lineage as its first argument.
 
 ## One-time prerequisites
 
@@ -14,7 +19,9 @@ be configured. Use Full (strict) TLS and DNS-01 renewal; the provider firewall
 allows HTTPS only from Cloudflare. Routine certificate renewal gracefully
 reloads NGINX using the guarded `deploy/renew-certificate.sh` deploy hook.
 The workflow updates an installed application; it does not provision the server,
-issue the initial certificate, or write application secrets.
+issue the initial certificate, or write application secrets. On the first
+upgrade from hard-coded origins, it preserves the running API's allowed origins
+in `.env.production` if that file does not already define `ALLOWED_ORIGINS`.
 
 The expected server paths are:
 
@@ -206,7 +213,9 @@ replace a browser check of login, gameplay, and WebSockets.
 
 For a manually customized installation, `deploy/deploy-vps.sh` accepts environment
 overrides `RETRUCO_DEPLOY_DIR`, `RETRUCO_COMPOSE`, and `RETRUCO_HEALTH_URL`.
-The workflow invokes the remote script without these overrides; customize the remote invocation or script defaults for your installation before enabling automatic deployment.
+The workflow uses the standard server paths and derives the public health URL
+from the running installation. Customize the remote invocation if your paths
+or health URL differ.
 
 After configuring the workflow and secrets, verify the first run under **Actions**.
 

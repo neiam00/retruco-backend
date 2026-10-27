@@ -12,9 +12,9 @@ configuration to your own domain and hosting environment before deployment.
    the database password, backend hostname, certificate directory, proxy secret,
    and any voice relay credentials. Configure Turnstile keys for accounts.
    Set `ALLOWED_ORIGINS` for the frontend origin and enable secure cookies for
-   HTTPS. `compose.production.yaml` hard-codes the origin, so override or edit
-   that value for your installation. Consult the NGINX templates when adapting
-   the configuration.
+   HTTPS. Production Compose requires `ALLOWED_ORIGINS` from the environment
+   file; use comma-separated exact origins with no paths or trailing slashes.
+   Consult the NGINX templates when adapting the configuration.
 3. Start PostgreSQL, apply the migrations, and start the API and proxy. Keep
    database volumes and maintain backups outside the server.
 4. Configure the frontend's `BACKEND_ORIGIN` and `API_PROXY_SECRET`, using the
@@ -22,13 +22,16 @@ configuration to your own domain and hosting environment before deployment.
    gameplay, WebSocket connections, and voice from separate devices.
 5. Set up certificate renewal and verify that NGINX reloads after renewal. The
    `deploy/renew-certificate.sh` hook accepts the certificate lineage as its
-   first argument and the Compose helper as its second; its defaults are tied
-   to an existing installation and must be reviewed.
+   first argument and the Compose helper as its second. With no lineage
+   argument, it reads `BACKEND_HOST` from the running proxy and handles only
+   `/etc/letsencrypt/live/<BACKEND_HOST>`.
 
-The production template and deployment scripts contain installation-specific
-hostnames and paths. In particular, set `RETRUCO_HEALTH_URL` for the deployment
-script and review the GitHub Actions workflow's environment URL and remote
-invocation before enabling automated deployments. See [automated deployment](deploy/GITHUB-ACTIONS.md),
+For upgrades from an installation that kept allowed origins in Compose source,
+the deployment script copies the running API's `ALLOWED_ORIGINS` into the private
+environment file before replacing source. Existing configured values are kept.
+Unless `RETRUCO_HEALTH_URL` is set, the public health check uses the running
+API's first allowed origin followed by `/api/health`. Explicitly override this
+URL when changing domains. See [automated deployment](deploy/GITHUB-ACTIONS.md),
 [voice configuration](deploy/VOICE.md), and [capacity and migration notes](deploy/CAPACITY.md).
 
 Run only one API instance: match ownership and subscriptions are held in memory.

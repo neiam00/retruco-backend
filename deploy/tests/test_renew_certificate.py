@@ -11,6 +11,34 @@ SCRIPT = Path(__file__).resolve().parents[1] / "renew-certificate.sh"
 
 
 class CertificateRenewalTests(unittest.TestCase):
+    def test_default_lineage_follows_proxy_hostname_and_ignores_other_sites(self):
+        for lineage, host, expected_code, expected_events in (
+            ("/etc/letsencrypt/live/origin.example.test", "origin.example.test", 0, "check\nreload\n"),
+            ("/etc/letsencrypt/live/another.example.test", "origin.example.test", 0, ""),
+            ("/etc/letsencrypt/live/origin.example.test", "", 1, ""),
+        ):
+            with self.subTest(lineage=lineage, host=host), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                log = root / "events"
+                compose = root / "compose"
+                compose.write_text("""#!/bin/sh
+set -eu
+case "$*" in
+  'exec -T proxy printenv BACKEND_HOST') printf '%s\\n' "$TEST_BACKEND_HOST" ;;
+  'exec -T proxy nginx -t') printf 'check\\n' >> "$TEST_EVENTS" ;;
+  'exec -T proxy nginx -s reload') printf 'reload\\n' >> "$TEST_EVENTS" ;;
+  *) exit 99 ;;
+esac
+""")
+                compose.chmod(0o755)
+                result = subprocess.run(
+                    ["sh", str(SCRIPT), "", str(compose)],
+                    env={**os.environ, "RENEWED_LINEAGE": lineage, "TEST_BACKEND_HOST": host, "TEST_EVENTS": str(log)},
+                    text=True, capture_output=True, timeout=5,
+                )
+                self.assertEqual(result.returncode, expected_code, result.stderr)
+                self.assertEqual(log.read_text() if log.exists() else "", expected_events)
+
     def test_hook_scope_and_reload_failures(self):
         # These are commands at the external Compose/NGINX boundary. Reject
         # everything else, including stop/restart, which would disconnect games.

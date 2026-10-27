@@ -7,7 +7,7 @@ archive="${1:?Usage: deploy-vps.sh SOURCE_ARCHIVE COMMIT_SHA}"
 revision="${2:?Supply the deployed commit SHA}"
 deploy_dir="${RETRUCO_DEPLOY_DIR:-/opt/retruco/backend}"
 compose="${RETRUCO_COMPOSE:-/usr/local/sbin/retruco-compose}"
-public_health="${RETRUCO_HEALTH_URL:-https://retru.co.ve/api/health}"
+public_health="${RETRUCO_HEALTH_URL:-}"
 
 [[ "$revision" =~ ^[a-f0-9]{40}$ ]] || { echo "Invalid commit SHA" >&2; exit 1; }
 [[ "$deploy_dir" = /* && "$deploy_dir" != / && -d "$deploy_dir" ]] || { echo "Deployment directory is missing or invalid" >&2; exit 1; }
@@ -69,6 +69,36 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 trap 'exit 129' HUP
+
+# Capture the installed origin configuration before replacing the old Compose
+# file. Older installations kept it in source instead of .env.production.
+needs_origin_migration=0
+if ! grep -Eq '^[[:space:]]*(export[[:space:]]+)?ALLOWED_ORIGINS[[:space:]]*=' "$deploy_dir/.env.production"; then
+  needs_origin_migration=1
+fi
+if [[ -z "$public_health" ]] || (( needs_origin_migration == 1 )); then
+  installed_origins="$("$compose" exec -T api printenv ALLOWED_ORIGINS < /dev/null)" || {
+    echo "Cannot read installed frontend origins; configure ALLOWED_ORIGINS in .env.production and RETRUCO_HEALTH_URL before deploying." >&2
+    exit 1
+  }
+  [[ -n "$installed_origins" ]] || { echo "Installed ALLOWED_ORIGINS is empty" >&2; exit 1; }
+  [[ "$installed_origins" != *$'\n'* && "$installed_origins" != *$'\r'* ]] || {
+    echo "Installed ALLOWED_ORIGINS must be a single line" >&2
+    exit 1
+  }
+  IFS=, read -r -a origin_list <<< "$installed_origins"
+  for origin in "${origin_list[@]}"; do
+    [[ "$origin" =~ ^https?://([a-zA-Z0-9.-]+|\[[a-fA-F0-9:]+\])(:[0-9]+)?$ ]] || {
+      echo "Installed ALLOWED_ORIGINS must contain exact HTTP(S) origins" >&2
+      exit 1
+    }
+  done
+  if (( needs_origin_migration == 1 )); then
+    printf '\nALLOWED_ORIGINS=%s\n' "$installed_origins" >> "$deploy_dir/.env.production"
+    echo "Preserved installed frontend origins in .env.production."
+  fi
+  public_health="${public_health:-${origin_list[0]}/api/health}"
+fi
 
 "$compose" config --quiet
 services="$("$compose" config --services)"
