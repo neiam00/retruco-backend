@@ -61,6 +61,7 @@ type Server struct {
 	limitOrder      []string
 	voice           *voiceHub
 	turnstileClient *http.Client
+	voiceClient     *http.Client
 	sessions        *sessionCache
 	passwordSlots   chan struct{}
 }
@@ -71,8 +72,9 @@ type window struct {
 }
 
 func New(ctx context.Context, config Config, repository Repository, host *game.Host, log *slog.Logger) (*Server, error) {
-	if (len(config.Voice.TURNURLs) > 0) != (config.Voice.TURNSecret != "") {
-		return nil, fmt.Errorf("voice TURN URLs and shared secret must be configured together")
+	voiceClient, err := newVoiceClient(config.Voice)
+	if err != nil {
+		return nil, err
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte("unused-login-timing-placeholder"), 12)
 	if err != nil {
@@ -97,6 +99,7 @@ func New(ctx context.Context, config Config, repository Repository, host *game.H
 		limits:          map[string]window{},
 		voice:           newVoiceHub(),
 		turnstileClient: turnstileClient,
+		voiceClient:     voiceClient,
 		sessions:        newSessionCache(),
 		passwordSlots:   make(chan struct{}, 1),
 	}, nil

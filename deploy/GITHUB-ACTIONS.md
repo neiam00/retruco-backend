@@ -22,8 +22,8 @@ The expected server paths are:
 - `/usr/local/sbin/retruco-compose`
 
 The helper must use the `retruco` Compose project and the production files from
-that directory, as in the VPS guide. If voice is enabled, retain `compose.voice.yaml`
-in the helper; deployment detects and updates its `turn` service.
+that directory, as in the VPS guide. Voice uses Cloudflare Realtime TURN.
+If the helper still includes `compose.voice.yaml`, complete [the Coturn migration](VOICE.md#migrate-from-local-coturn) first; deployment aborts before replacing source when it detects that service.
 
 The SSH user must be able to run Docker, execute the helper, and write
 `/opt/retruco/backend` and `/opt/retruco/backups`. The fresh-VPS guide uses `root`,
@@ -97,7 +97,8 @@ For a custom SSH port, add `-p PORT` to `ssh-keyscan`; its output should contain
 `[host]:PORT`. A server reset changes its host key, so verify and update the secret
 again after a future reset.
 
-`POSTGRES_PASSWORD`, `API_PROXY_SECRET`, and optional TURN secrets stay in the
+`POSTGRES_PASSWORD`, `API_PROXY_SECRET`, `CLOUDFLARE_TURN_TOKEN_ID`, and
+`CLOUDFLARE_TURN_API_TOKEN` stay in the
 VPS's `.env.production`. No B2, Cloudflare API, or container-registry token is
 needed **by this workflow**. The DNS-01 token remains in the root-only Certbot
 credentials file on the VPS, outside the application and its container mounts.
@@ -110,6 +111,8 @@ the matching `API_PROXY_SECRET`.
    builder stage, migrates a disposable PostgreSQL 18 service, and runs
    `go test -race ./...` with `DATABASE_TEST_URL` plus `go vet ./...`.
    Migration, database, HTTP/WebSocket and race tests gate production deployment.
+   The tagged Cloudflare voice integration test also verifies credential welcome,
+   refresh, and failure handling without calling the real provider.
 2. Archives the exact pushed commit and uploads it and the deployment script over
    verified SSH. Runs the script from a file with stdin closed so Docker cannot
    consume the remaining deployment commands.
@@ -123,7 +126,8 @@ the matching `API_PROXY_SECRET`.
 6. Stops the API, saves a PostgreSQL backup under `/opt/retruco/backups`, and
    applies migrations. This creates a maintenance window and disconnects games.
 7. Starts the new API, checks it locally using the existing proxy secret,
-   updates TURN if configured, and recreates NGINX.
+   and recreates NGINX. TURN credentials are issued by the API through Cloudflare;
+   no relay container is deployed.
 8. Checks `https://retru.co.ve/api/health` with a unique deployment query to avoid
    cached responses, and records the deployed SHA in
    `/opt/retruco/backend/.deployed-revision`. The workflow independently verifies

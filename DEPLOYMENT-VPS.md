@@ -63,13 +63,13 @@ curl --fail --silent --show-error https://www.cloudflare.com/ips-v4
 curl --fail --silent --show-error https://www.cloudflare.com/ips-v6
 ```
 
-Keep the default outbound allow rules for TCP, UDP, and ICMP to all IPv4/IPv6 destinations. The host needs outbound DNS, HTTPS for Cloudflare/ACME, package/image downloads, and optional TURN relay traffic. Do not add inbound allows for **80**, **8080**, **5432**, or **54329**. DNS-01 needs no inbound validation connection. The production Compose file publishes only NGINX port 443; API/database ports remain bound to loopback.
+Keep the default outbound allow rules for TCP, UDP, and ICMP to all IPv4/IPv6 destinations. The host needs outbound DNS, HTTPS for Cloudflare/ACME, package/image downloads, and Cloudflare TURN credential issuance. Do not add inbound allows for **80**, **8080**, **5432**, or **54329**. DNS-01 needs no inbound validation connection. The production Compose file publishes only NGINX port 443; API/database ports remain bound to loopback.
 
 Remove broad inbound HTTPS/HTTP rules (`0.0.0.0/0`, `::/0`, or “All IPv4/IPv6”) from **every** firewall attached directly or through tags. Another allow rule can leave a bypass open. Do not add an explicit deny-all rule that overrides the Cloudflare allow rules; unmatched traffic is already denied. Check both address families even if the DNS record is IPv4-only. Review the official Cloudflare lists periodically and update the firewall when they change.
 
 Keep the current SSH session open and verify a **second SSH session to `DROPLET_IP`** before removing old SSH rules. Use the droplet IP or a separate DNS-only SSH hostname for all SSH/rsync/CI operations; the orange-cloud origin hostname cannot carry SSH. Standard GitHub-hosted runners have changing egress IPs: configure a compatible runner with static egress and set the workflow's `VPS_RUNNER` repository variable to its label before restricting CI SSH access. See [the CI setup](./deploy/GITHUB-ACTIONS.md).
 
-Use the provider firewall as the enforcement boundary for Docker's published ports. UFW alone may not filter Docker-forwarded traffic. If an additional host firewall is enabled, align its forwarding rules with this policy without blocking Cloudflare. Optional TURN requires separate public-port exceptions described below; do not apply the Cloudflare source restriction to TURN.
+Use the provider firewall as the enforcement boundary for Docker's published ports. UFW alone may not filter Docker-forwarded traffic. If an additional host firewall is enabled, align its forwarding rules with this policy without blocking Cloudflare. Cloudflare Realtime TURN needs no additional inbound ports on the droplet; browsers connect directly to the managed relay.
 
 References: [Cloudflare IP ranges](https://www.cloudflare.com/ips/), [DigitalOcean firewall rules](https://docs.digitalocean.com/products/networking/firewalls/how-to/configure-rules/), [Docker and UFW](https://docs.docker.com/engine/network/packet-filtering-firewalls/#docker-and-ufw).
 
@@ -158,6 +158,8 @@ API_PROXY_SECRET=$(openssl rand -hex 32)
 BACKEND_HOST=origin.retru.co.ve
 TLS_CERT_DIR=/etc/letsencrypt
 ALLOWED_ORIGINS=https://retru.co.ve
+CLOUDFLARE_TURN_TOKEN_ID=
+CLOUDFLARE_TURN_API_TOKEN=
 EOF
 fi
 chmod 600 .env.production
@@ -173,6 +175,8 @@ Confirm the values, keeping the generated secrets. Save with Ctrl+O, Enter, and 
 | `BACKEND_HOST` | `origin.retru.co.ve`, without `https://` or a path |
 | `TLS_CERT_DIR` | Full Certbot directory, mounted read-only into NGINX by this runbook |
 | `ALLOWED_ORIGINS` | `https://retru.co.ve`, without a trailing slash |
+| `CLOUDFLARE_TURN_TOKEN_ID` | Cloudflare Realtime TURN Token ID; set with its API token for managed voice relay |
+| `CLOUDFLARE_TURN_API_TOKEN` | Associated TURN API token; backend-only, separate from Certbot DNS and Turnstile tokens |
 
 Compose builds `DATABASE_URL` automatically. You do not need to add it to this file. Production already sets `COOKIE_SECURE=true` and the API listen address.
 
@@ -366,34 +370,24 @@ Verify SSE updates arrive promptly and WebSocket connections survive an idle per
 
 By default, browser API access is allowed only from `https://retru.co.ve`. If you want the old production Pages address to remain usable too, set `ALLOWED_ORIGINS=https://retru.co.ve,https://retruco.pages.dev`, then run `retruco-compose up -d api` followed by `retruco-compose restart proxy` to refresh NGINX's upstream address after API recreation. Preview URLs require their own exact origins plus separate Pages **Preview** bindings. The `www.retru.co.ve` hostname also needs an explicit Pages custom-domain setup and an allowed-origin entry if you choose to serve the app there.
 
-## Optional: enable reliable voice across networks
+## Enable voice relaying with Cloudflare TURN
 
-The current backend also supports voice signaling. For audio across NATs and mobile networks, deploy the repository's coturn relay; the basic HTTPS deployment above does not configure a TURN relay.
+The backend uses **Cloudflare Realtime TURN** for audio across NATs and mobile networks. The VPS only handles HTTPS signaling; it does not need Coturn, a `turn` DNS record, or inbound TURN ports.
 
-1. Add a **DNS-only A record** named `turn`, pointing to the same droplet IP.
-2. Add these values to `/opt/retruco/backend/.env.production`, replacing `DROPLET_IP` and the secret placeholder:
+1. In Cloudflare Realtime TURN, obtain a **TURN Token ID** and its associated **API token**. These are different from the DNS-01 API token and Turnstile keys.
+2. Edit `/opt/retruco/backend/.env.production` directly on the VPS and set both values:
 
-```dotenv
-VOICE_STUN_URLS=stun:turn.retru.co.ve:3478
-VOICE_TURN_URLS=turn:turn.retru.co.ve:3478?transport=udp,turn:turn.retru.co.ve:3478?transport=tcp
-VOICE_TURN_REALM=turn.retru.co.ve
-VOICE_TURN_EXTERNAL_IP=DROPLET_IP
-VOICE_TURN_SECRET=PASTE_A_NEW_RANDOM_SECRET
-```
+   ```dotenv
+   CLOUDFLARE_TURN_TOKEN_ID=YOUR_TURN_TOKEN_ID
+   CLOUDFLARE_TURN_API_TOKEN=YOUR_TURN_API_TOKEN
+   ```
 
-Generate the separate voice secret with `openssl rand -hex 32`. It stays on the backend; do not put it in Pages public variables.
+   Keep this file mode `600`. Do not put the token in chat, Git, Pages variables, or frontend configuration. Both values are required together; leaving both empty permits only direct peer connections for local development.
+3. Deploy the updated backend with the normal helper/workflow. For an existing **local Coturn deployment**, first follow [the voice migration steps](./deploy/VOICE.md#migrate-from-local-coturn): stop/remove the old relay while its overlay still exists, remove the overlay from the helper, then deploy. Automatic deployment stops before changing source if the old `turn` service remains configured.
+4. Keep outbound HTTPS available to `rtc.live.cloudflare.com`. No additional inbound firewall rules are needed. After retiring Coturn, remove inbound TCP/UDP 3478 and UDP 49160–49260 rules and the old `turn.retru.co.ve` DNS record if unused.
+5. Test voice from two different networks, including cellular data. Confirm a WebRTC **relay** candidate is selected when direct connectivity is unavailable, and keep a session open past the 30-minute credential refresh.
 
-3. Edit `/usr/local/sbin/retruco-compose` and insert this extra line immediately before `"$@"`, keeping the trailing backslash:
-
-```sh
-  -f /opt/retruco/backend/compose.voice.yaml \
-```
-
-4. Allow inbound **TCP/UDP 3478** and **UDP 49160–49260** from clients on the Internet in the DigitalOcean and host firewalls. These are explicit exceptions to the HTTPS source restriction; keep TCP 443 Cloudflare-only.
-5. Run `retruco-compose config --quiet`, then `retruco-compose up -d --build` and `retruco-compose restart proxy`.
-6. Test voice with two devices on different networks, including mobile data. To verify TURN itself, inspect the selected WebRTC ICE candidate and confirm a relay candidate is used.
-
-TURN traffic goes directly to the droplet, not through the Cloudflare HTTP proxy or NGINX. The DNS-only TURN record exposes this droplet's IP, so origin protection depends on the HTTPS firewall, not IP secrecy. Cloudflare's HTTP proxy does not protect the public TURN ports. The supplied overlay has no TLS TURN listener; networks allowing only TLS egress need additional `turns:` infrastructure. See [the repository's voice deployment guide](./deploy/VOICE.md) for relay details and verification.
+The backend obtains one-hour ICE credentials per voice connection and refreshes them on the browser's existing schedule. The long-lived API token remains on the server. Provider failures affect voice, not gameplay. See [voice configuration, migration, and troubleshooting](./deploy/VOICE.md) and the [Cloudflare credential API](https://developers.cloudflare.com/realtime/turn/generate-credentials/).
 
 ## Migrate an existing DNS-only deployment
 
@@ -419,7 +413,7 @@ Use this sequence to preserve the existing database, secrets, and certificate li
    ```
 
    This tests DNS validation before saving the new renewal settings. Resolve failures before continuing; do not leave renewal disabled after the maintenance work.
-4. Keep `TLS_CERT_DIR=/etc/letsencrypt`. Regenerate `deploy/nginx.vps.conf.template` with the step-5 `sed` command so it uses the latest HTTPS-only template and Certbot paths. Preserve any deliberate local changes and keep the optional voice overlay in the helper. Run `retruco-compose config --quiet`, then `retruco-compose up -d --no-deps --force-recreate proxy`. This one-time container recreation removes the old published port 80 and briefly disconnects streams; routine renewals do not.
+4. Keep `TLS_CERT_DIR=/etc/letsencrypt`. Regenerate `deploy/nginx.vps.conf.template` with the step-5 `sed` command so it uses the latest HTTPS-only template and Certbot paths. Preserve any deliberate local changes. If the helper still includes a local Coturn overlay, complete the separate voice migration before deploying this version. Run `retruco-compose config --quiet`, then `retruco-compose up -d --no-deps --force-recreate proxy`. This one-time container recreation removes the old published port 80 and briefly disconnects streams; routine renewals do not.
 5. Install the new guarded deploy hook and enable/test the timer as in step 8. Confirm the DNS-01 dry run and graceful reload succeed while a game is connected.
 6. Configure Cloudflare Full (strict), the edge certificate, cache bypass, and compatible security rules from step 1; switch `origin` to **Proxied**. Verify the Pages health check and a full browser session.
 7. Apply the Cloudflare-only HTTPS firewall from step 1, remove old public HTTP/HTTPS allows, then run both the proxied and direct-IP checks from step 10. Verify SSH and CI still connect.

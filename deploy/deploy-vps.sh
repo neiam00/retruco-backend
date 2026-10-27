@@ -71,6 +71,11 @@ trap 'exit 143' TERM
 trap 'exit 129' HUP
 
 "$compose" config --quiet
+services="$("$compose" config --services)"
+if grep -qx turn <<< "$services"; then
+  echo "Retire the local Coturn service and remove compose.voice.yaml from retruco-compose before deploying. See deploy/VOICE.md." >&2
+  exit 1
+fi
 [[ -n "$("$compose" ps -q db)" ]] || { echo "PostgreSQL must already be running; complete the initial deployment first." >&2; exit 1; }
 tar -xzf "$archive" -C "$stage"
 [[ -f "$stage/Dockerfile" && -f "$stage/compose.yaml" ]] || { echo "Archive is not the backend repository" >&2; exit 1; }
@@ -139,10 +144,6 @@ for ((attempt = 1; attempt <= 30; attempt++)); do
 done
 (( healthy == 1 )) || { echo "New API did not become healthy" >&2; exit 1; }
 
-services="$("$compose" config --services)"
-if grep -qx turn <<< "$services"; then
-  "$compose" up -d --no-deps turn
-fi
 # Recreate NGINX to pick up template changes and resolve the new API address.
 "$compose" up -d --no-build --no-deps --force-recreate proxy
 curl --fail --silent --show-error --retry 10 --retry-delay 3 \

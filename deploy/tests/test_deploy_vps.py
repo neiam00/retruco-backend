@@ -44,7 +44,10 @@ if [[ "$*" == *"/internal/deployment"* ]]; then
   exec sh -c "$6" "$7" "${@:8}"
 fi
 case "$*" in
-  "config --services") printf 'db\\nmigrate\\napi\\nproxy\\n' ;;
+  "config --services")
+    printf 'db\\nmigrate\\napi\\nproxy\\n'
+    if [[ "${MOCK_FAIL:-}" == legacy-turn ]]; then printf 'turn\\n'; fi
+    ;;
   "ps -q db") printf 'database-container\\n' ;;
   "build api migrate") [[ "${MOCK_FAIL:-}" != build ]] || exit 1 ;;
   "exec -T db pg_dump -U retruco -d retruco -Fc")
@@ -166,6 +169,16 @@ test "${MOCK_FAIL:-}" != public-health
         self.assertNotIn("stop api", self.events)
         self.assertNotIn("run --rm --no-deps migrate", self.events)
         self.assertNotIn('notice:{"updating":true}', self.events)
+        self.assert_server_files_preserved()
+
+    def test_legacy_turn_overlay_blocks_before_source_or_service_changes(self):
+        result = self.deploy("legacy-turn")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Retire the local Coturn", result.stderr)
+        self.assertTrue((self.app / "obsolete.go").exists())
+        self.assertFalse((self.app / "new.go").exists())
+        self.assertNotIn("build api migrate", self.events)
+        self.assertNotIn("stop api", self.events)
         self.assert_server_files_preserved()
 
     def test_notice_failure_keeps_api_running_and_cancels_the_notice(self):

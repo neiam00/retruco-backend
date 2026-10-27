@@ -182,7 +182,7 @@ and seat -1. The updated browser CPU also accepts version-1 views during rollout
 For automatic deployment on pushes to `master`, see
 [GitHub Actions VPS deployment](deploy/GITHUB-ACTIONS.md).
 
-For voice signaling and the self-hosted TURN relay, see [voice deployment](deploy/VOICE.md).
+For voice signaling and Cloudflare Realtime TURN, see [voice deployment](deploy/VOICE.md).
 
 The public frontend and API use `https://retru.co.ve` and
 `https://retru.co.ve/api`. The frontend's server hook forwards `/api/*` to a
@@ -190,7 +190,7 @@ separate backend origin. That origin needs DNS and a valid TLS certificate.
 It is an operator-selected hostname, not the public browser API URL.
 For `origin.retru.co.ve`, use a **Proxied** A record and **Full (strict)** TLS.
 Restrict the provider firewall's inbound TCP 443 to Cloudflare's current IPv4/IPv6
-ranges; retain separate SSH and optional TURN rules. Remove broad HTTPS allows
+ranges; retain separate administrative SSH rules. Managed TURN needs no inbound relay ports. Remove broad HTTPS allows
 from every attached firewall. Docker's published ports can bypass UFW, so use
 the provider firewall as the enforcement boundary. Port 80 is not published.
 

@@ -62,6 +62,7 @@ jobs:
             -e DATABASE_TEST_URL=postgres://retruco_test:disposable_ci_password@127.0.0.1:5432/retruco_test?sslmode=disable \
             retruco-ci sh -ec 'apk add --no-cache build-base >/dev/null; CGO_ENABLED=1 go test -race ./...'
           docker run --rm retruco-ci go vet ./...
+          docker run --rm retruco-ci go test -tags=integration ./internal/api -run '^TestVoiceCloudflare'
 
       - name: Configure verified SSH access
         env:

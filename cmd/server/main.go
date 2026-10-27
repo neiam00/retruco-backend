@@ -68,9 +68,8 @@ func run(log *slog.Logger) error {
 			Development: os.Getenv("APP_ENV") == "development",
 		},
 		Voice: api.VoiceConfig{
-			STUNURLs:   envList("VOICE_STUN_URLS"),
-			TURNURLs:   envList("VOICE_TURN_URLS"),
-			TURNSecret: os.Getenv("VOICE_TURN_SECRET"),
+			TURNTokenID:  os.Getenv("CLOUDFLARE_TURN_TOKEN_ID"),
+			TURNAPIToken: os.Getenv("CLOUDFLARE_TURN_API_TOKEN"),
 		},
 	}, repository, host, log)
 	if err != nil {
@@ -106,14 +105,4 @@ func env(name, fallback string) string {
 		return value
 	}
 	return fallback
-}
-
-func envList(name string) []string {
-	var values []string
-	for _, value := range strings.Split(os.Getenv(name), ",") {
-		if value = strings.TrimSpace(value); value != "" {
-			values = append(values, value)
-		}
-	}
-	return values
 }

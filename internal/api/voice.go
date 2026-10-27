@@ -2,12 +2,9 @@ package api
 
 import (
 	"context"
-	"crypto/hmac"
 	"crypto/rand"
-	"crypto/sha1" // #nosec G505 -- TURN REST credentials require HMAC-SHA1.
-	"encoding/base64"
 	"encoding/json"
-	"fmt"
+	"errors"
 	"net/http"
 	"strings"
 	"sync"
@@ -18,35 +15,18 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-// VoiceConfig uses coturn's time-limited REST authentication. The shared secret
-// stays on the server; browsers receive credentials valid for one hour.
+// VoiceConfig holds Cloudflare Realtime TURN credentials. Only short-lived
+// ICE credentials are sent to browsers; the API token stays on the backend.
 type VoiceConfig struct {
-	STUNURLs   []string
-	TURNURLs   []string
-	TURNSecret string
+	TURNTokenID  string
+	TURNAPIToken string
+	Client       *http.Client
 }
 
 type iceServer struct {
 	URLs       []string `json:"urls"`
 	Username   string   `json:"username,omitempty"`
 	Credential string   `json:"credential,omitempty"`
-}
-
-func (config VoiceConfig) iceServers(userID string) []iceServer {
-	servers := []iceServer{}
-	if len(config.STUNURLs) > 0 {
-		servers = append(servers, iceServer{URLs: config.STUNURLs})
-	}
-	if len(config.TURNURLs) > 0 && config.TURNSecret != "" {
-		username := fmt.Sprintf("%d:%s", time.Now().Add(time.Hour).Unix(), userID)
-		mac := hmac.New(sha1.New, []byte(config.TURNSecret))
-		_, _ = mac.Write([]byte(username))
-		servers = append(servers, iceServer{
-			URLs: config.TURNURLs, Username: username,
-			Credential: base64.StdEncoding.EncodeToString(mac.Sum(nil)),
-		})
-	}
-	return servers
 }
 
 type voicePeer struct {
@@ -176,6 +156,23 @@ func (s *Server) voiceSocket(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusNotFound, "No encontramos esa mesa.")
 		return
 	}
+	servers, err := s.voiceICEServers(r.Context(), user.ID)
+	if err != nil {
+		if errors.Is(err, errVoiceCredentialsLimited) {
+			fail(w, http.StatusTooManyRequests, "Espera un momento antes de volver al audio.")
+		} else {
+			s.log.Error("voice credentials unavailable", "error", err)
+			fail(w, http.StatusServiceUnavailable, "No pudimos conectar el audio. Inténtalo de nuevo.")
+		}
+		return
+	}
+	// Credential issuance can take several seconds; recheck room access before
+	// registering a peer, in case the user left or changed seats meanwhile.
+	canSpeak, err = s.host.VoiceAccess(code, user.ID)
+	if err != nil {
+		fail(w, http.StatusNotFound, "No encontramos esa mesa.")
+		return
+	}
 	origins := make([]string, 0, len(s.config.Origins))
 	for _, origin := range s.config.Origins {
 		origins = append(origins, strings.TrimPrefix(strings.TrimPrefix(origin, "https://"), "http://"))
@@ -192,7 +189,7 @@ func (s *Server) voiceSocket(w http.ResponseWriter, r *http.Request) {
 		peer:   voicePeer{ID: rand.Text(), Name: user.Name, CanSpeak: canSpeak},
 		userID: user.ID, inbox: make(chan voiceMessage, 128), cancel: cancel,
 	}
-	s.voice.join(code, member, s.config.Voice.iceServers(user.ID))
+	s.voice.join(code, member, servers)
 	defer s.voice.leave(code, member.peer.ID)
 	updates, unsubscribe := s.host.Subscribe(code)
 	defer unsubscribe()
@@ -253,7 +250,12 @@ func (s *Server) voiceSocket(w http.ResponseWriter, r *http.Request) {
 			}
 			switch message.Type {
 			case "refresh":
-				deliverVoice(member, voiceMessage{Type: "ice", ICEServers: s.config.Voice.iceServers(user.ID)})
+				servers, err := s.voiceICEServers(ctx, user.ID)
+				if err != nil {
+					s.log.Error("voice credential refresh unavailable", "error", err)
+					return
+				}
+				deliverVoice(member, voiceMessage{Type: "ice", ICEServers: servers})
 			case "signal":
 				s.voice.relay(code, member.peer.ID, message)
 			}
