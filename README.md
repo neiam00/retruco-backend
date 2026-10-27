@@ -61,3 +61,8 @@ See the [VPS deployment guide](DEPLOYMENT-VPS.md),
 [automated deployment notes](deploy/GITHUB-ACTIONS.md), and
 [capacity and migration notes](deploy/CAPACITY.md). Review deployment-specific
 hostnames and defaults before using the supplied configuration and scripts.
+
+## License
+
+The project code is available under the [MIT License](LICENSE). Dependencies
+are subject to their respective licenses.
