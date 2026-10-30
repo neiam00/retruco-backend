@@ -38,7 +38,8 @@ If the helper still includes `compose.voice.yaml`, complete [the Coturn migratio
 The SSH user must be able to run Docker, execute the helper, and write
 `/opt/retruco/backend` and `/opt/retruco/backups`. The workflow defaults to
 `root`. The server needs `bash`, `rsync`, `tar`, `curl`, and
-`flock` (provided by `util-linux` on Ubuntu). The CI runner and VPS Docker daemon
+`flock` (provided by `util-linux` on Ubuntu), and `sha256sum` (from coreutils).
+The CI runner and VPS Docker daemon
 must use the same Linux architecture; deployment rejects incompatible images
 before replacing source or stopping the API. Keep inbound SSH available to the
 runner separately from the Cloudflare-only HTTPS rule. The HTTPS source list
@@ -135,8 +136,11 @@ the matching `API_PROXY_SECRET`.
    image, and the deployment script over verified SSH. No registry credentials
    are needed. Runs the script from a file with stdin closed so Docker cannot
    consume the remaining deployment commands.
-3. Takes a server-side lock, loads the image, and verifies its immutable image ID,
-   revision label, and native platform against the CI result and VPS. Then
+3. Takes a server-side lock and verifies the compressed image archive's SHA-256
+   against the CI result before loading it. Verifies the restored commit tag's
+   revision label and native platform against the commit and VPS. Archive hashes
+   work across Docker stores that report different image IDs (manifest versus
+   config digests). Then
    synchronizes application source, removing obsolete
    source files. Preserves `.env*`, `.git`, `.agents`, `.agent`, `compose.vps.yaml`,
    `deploy/nginx.vps.conf.template`, `.deployed-revision`, `bin`, and `coverage.out`.
@@ -205,7 +209,7 @@ rejects overlapping calls to the deployment script.
 - Build/test failure in CI: the old API continues running; correct the source and
   push again.
 - Image load/verification failure: the old API and installed source remain
-  untouched. Check the transfer, image ID, revision, and runner/VPS architecture.
+  untouched. Check the transfer, archive checksum, revision, and runner/VPS architecture.
 - Backup failure: the script restarts the existing API container without changing
   the schema.
 - Migration failure: the workflow fails and leaves the API stopped. Review the
@@ -231,8 +235,9 @@ replace a browser check of login, gameplay, and WebSockets.
 
 For a manually customized installation, `deploy/deploy-vps.sh` accepts environment
 overrides `RETRUCO_DEPLOY_DIR`, `RETRUCO_COMPOSE`, and `RETRUCO_HEALTH_URL`.
-Its arguments are `SOURCE_ARCHIVE COMMIT_SHA IMAGE_ARCHIVE IMAGE_ID`; the image
-ID is the `sha256:...` value from `docker image inspect --format '{{.Id}}'` in CI.
+Its arguments are `SOURCE_ARCHIVE COMMIT_SHA IMAGE_ARCHIVE IMAGE_SHA256`; the
+last argument is the 64-character hexadecimal checksum from `sha256sum` of the
+compressed image archive produced in CI.
 The helper must include `compose.production.yaml` so both application services
 use `retruco-backend:production`; operator overrides must preserve that image.
 The workflow uses the standard server paths and derives the public health URL

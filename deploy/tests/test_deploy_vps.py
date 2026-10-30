@@ -1,5 +1,6 @@
 """Exercise deployment failures without SSH, Docker, or a real database."""
 
+import hashlib
 import os
 from pathlib import Path
 import subprocess
@@ -10,7 +11,6 @@ import unittest
 
 SCRIPT = Path(__file__).resolve().parents[1] / "deploy-vps.sh"
 REVISION = "a" * 40
-IMAGE_ID = "sha256:" + "b" * 64
 
 
 class DeploymentTests(unittest.TestCase):
@@ -77,15 +77,16 @@ case "$*" in
   "version --format "*) printf 'linux/amd64\\n' ;;
   "image inspect --format "*)
     [[ "${MOCK_FAIL:-}" != image-missing ]] || exit 1
-    image_id="$MOCK_IMAGE_ID"
+    # The restored commit tag works across Docker stores. A runner's manifest
+    # ID may be absent on a VPS that instead identifies images by config ID.
+    [[ "${!#}" == "retruco-backend:$MOCK_REVISION" ]] || exit 1
     revision="$MOCK_REVISION"
     platform=linux/amd64
     case "${MOCK_FAIL:-}" in
-      image-id) image_id=sha256:wrong ;;
       image-revision) revision=wrong ;;
       image-platform) platform=linux/arm64 ;;
     esac
-    printf '%s %s %s\\n' "$image_id" "$revision" "$platform"
+    printf '%s %s\\n' "$revision" "$platform"
     ;;
   "image tag "*) [[ "${MOCK_FAIL:-}" != image-tag ]] || exit 1 ;;
   *) exit 1 ;;
@@ -139,6 +140,7 @@ test "${MOCK_FAIL:-}" != public-health
             archive.add(source, arcname=".")
         self.image_archive = self.root / "image.tar.gz"
         self.image_archive.write_bytes(b"CI-built image archive")
+        self.image_sha256 = hashlib.sha256(self.image_archive.read_bytes()).hexdigest()
         self.env = {
             **os.environ,
             "PATH": f"{self.bin}{os.pathsep}{os.environ['PATH']}",
@@ -146,7 +148,6 @@ test "${MOCK_FAIL:-}" != public-health
             "RETRUCO_COMPOSE": str(self.compose),
             "MOCK_LOG": str(self.log),
             "MOCK_ALLOWED_ORIGINS": "https://cards.example.test,https://other.example.test",
-            "MOCK_IMAGE_ID": IMAGE_ID,
             "MOCK_REVISION": REVISION,
         }
 
@@ -156,7 +157,7 @@ test "${MOCK_FAIL:-}" != public-health
         path.chmod(0o755)
 
     def deploy(self, fail="", streamed=False):
-        arguments = [str(self.archive), REVISION, str(self.image_archive), IMAGE_ID]
+        arguments = [str(self.archive), REVISION, str(self.image_archive), self.image_sha256]
         command = ["bash", str(SCRIPT), *arguments]
         if streamed:
             command = ["bash", "-s", "--", *arguments]
@@ -193,7 +194,7 @@ test "${MOCK_FAIL:-}" != public-health
         backup = self.events.index("exec -T db pg_dump -U retruco -d retruco -Fc")
         migration = self.events.index("run --rm --pull never --no-deps migrate")
         load = self.events.index(f"docker image load --input {self.image_archive}")
-        tag = self.events.index(f"docker image tag {IMAGE_ID} retruco-backend:production")
+        tag = self.events.index(f"docker image tag retruco-backend:{REVISION} retruco-backend:production")
         notice = self.events.index('notice:{"updating":true}')
         self.assertLess(load, tag)
         self.assertLess(tag, notice)
@@ -228,8 +229,16 @@ test "${MOCK_FAIL:-}" != public-health
     def test_missing_expected_image_does_not_interrupt_players(self):
         self.assert_image_rejected("image-missing")
 
-    def test_mismatched_image_id_does_not_interrupt_players(self):
-        self.assert_image_rejected("image-id")
+    def test_corrupted_image_archive_cannot_be_loaded_or_interrupt_players(self):
+        self.image_archive.write_bytes(b"changed after checksum was recorded")
+        result = self.deploy()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("checksum does not match", result.stderr)
+        self.assertFalse(any(event.startswith("docker image load ") for event in self.events))
+        self.assertTrue((self.app / "obsolete.go").exists())
+        self.assertNotIn("stop api", self.events)
+        self.assertNotIn('notice:{"updating":true}', self.events)
+        self.assert_server_files_preserved()
 
     def test_wrong_image_commit_does_not_interrupt_players(self):
         self.assert_image_rejected("image-revision")

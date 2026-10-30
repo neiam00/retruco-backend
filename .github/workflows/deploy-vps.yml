@@ -153,20 +153,20 @@ jobs:
           archive="$RUNNER_TEMP/retruco-source.tar.gz"
           image_archive="$RUNNER_TEMP/retruco-image.tar.gz"
           image="retruco-backend:$GITHUB_SHA"
-          image_id="$(docker image inspect --format '{{.Id}}' "$image")"
-          [[ "$image_id" =~ ^sha256:[a-f0-9]{64}$ ]] || { echo "Invalid built image ID" >&2; exit 1; }
           remote_archive="/tmp/retruco-deploy-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.tar.gz"
           remote_image="/tmp/retruco-image-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.tar.gz"
           remote_script="/tmp/retruco-deploy-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.sh"
           git archive --format=tar.gz --output="$archive" HEAD -- . ':(exclude).env' ':(exclude).env.*'
           docker image save "$image" | gzip -1 > "$image_archive"
+          image_sha256="$(sha256sum "$image_archive")"
+          image_sha256="${image_sha256%% *}"
           scp -F "$RUNNER_TEMP/retruco-ssh/config" "$archive" "retruco-vps:$remote_archive"
           scp -F "$RUNNER_TEMP/retruco-ssh/config" "$image_archive" "retruco-vps:$remote_image"
           scp -F "$RUNNER_TEMP/retruco-ssh/config" deploy/deploy-vps.sh "retruco-vps:$remote_script"
           # Keep the script separate from command stdin, and independently
           # require the success marker before accepting a successful SSH exit.
           ssh -n -F "$RUNNER_TEMP/retruco-ssh/config" retruco-vps \
-            "trap 'rm -f $remote_script $remote_archive $remote_image' EXIT; bash $remote_script $remote_archive $GITHUB_SHA $remote_image $image_id && test \"\$(cat /opt/retruco/backend/.deployed-revision)\" = $GITHUB_SHA"
+            "trap 'rm -f $remote_script $remote_archive $remote_image' EXIT; bash $remote_script $remote_archive $GITHUB_SHA $remote_image $image_sha256 && test \"\$(cat /opt/retruco/backend/.deployed-revision)\" = $GITHUB_SHA"
 
       - name: Remove runner credentials
         if: always()

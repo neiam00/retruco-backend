@@ -3,16 +3,17 @@
 set -Eeuo pipefail
 umask 077
 
-archive="${1:?Usage: deploy-vps.sh SOURCE_ARCHIVE COMMIT_SHA IMAGE_ARCHIVE IMAGE_ID}"
+archive="${1:?Usage: deploy-vps.sh SOURCE_ARCHIVE COMMIT_SHA IMAGE_ARCHIVE IMAGE_SHA256}"
 revision="${2:?Supply the deployed commit SHA}"
 image_archive="${3:?Supply the CI-built image archive}"
-image_id="${4:?Supply the CI-built image ID}"
+image_sha256="${4:?Supply the CI-built image archive SHA-256}"
+image="retruco-backend:$revision"
 deploy_dir="${RETRUCO_DEPLOY_DIR:-/opt/retruco/backend}"
 compose="${RETRUCO_COMPOSE:-/usr/local/sbin/retruco-compose}"
 public_health="${RETRUCO_HEALTH_URL:-}"
 
 [[ "$revision" =~ ^[a-f0-9]{40}$ ]] || { echo "Invalid commit SHA" >&2; exit 1; }
-[[ "$image_id" =~ ^sha256:[a-f0-9]{64}$ ]] || { echo "Invalid image ID" >&2; exit 1; }
+[[ "$image_sha256" =~ ^[a-f0-9]{64}$ ]] || { echo "Invalid image archive SHA-256" >&2; exit 1; }
 [[ "$deploy_dir" = /* && "$deploy_dir" != / && -d "$deploy_dir" ]] || { echo "Deployment directory is missing or invalid" >&2; exit 1; }
 [[ -f "$archive" && -f "$image_archive" && -x "$compose" ]] || { echo "Source/image archive or VPS Compose helper is missing" >&2; exit 1; }
 [[ -f "$deploy_dir/.env.production" && -f "$deploy_dir/compose.vps.yaml" &&
@@ -21,7 +22,7 @@ public_health="${RETRUCO_HEALTH_URL:-}"
   exit 1
 }
 
-for tool in flock rsync tar curl docker; do
+for tool in flock rsync tar curl docker sha256sum; do
   command -v "$tool" > /dev/null || { echo "Missing VPS command: $tool" >&2; exit 1; }
 done
 parent_dir="$(dirname "$deploy_dir")"
@@ -115,13 +116,19 @@ fi
 tar -xzf "$archive" -C "$stage"
 [[ -f "$stage/Dockerfile" && -f "$stage/compose.yaml" ]] || { echo "Archive is not the backend repository" >&2; exit 1; }
 
-# Load and verify the exact CI artifact before changing source or interrupting
-# players. Comparing native platforms also rejects an incompatible runner/VPS.
+# Verify the exact CI archive before loading it. Image IDs differ between
+# containerd and classic Docker stores; the archive checksum is portable.
+checksum="$(sha256sum -- "$image_archive")"
+[[ "${checksum%% *}" == "$image_sha256" ]] || {
+  echo "CI image archive checksum does not match" >&2
+  exit 1
+}
+echo "Verified CI image archive checksum $image_sha256."
 docker image load --input "$image_archive" < /dev/null
 platform="$(docker version --format '{{.Server.Os}}/{{.Server.Arch}}')"
-metadata="$(docker image inspect --format '{{.Id}} {{index .Config.Labels "org.opencontainers.image.revision"}} {{.Os}}/{{.Architecture}}' "$image_id")"
-[[ "$metadata" == "$image_id $revision $platform" ]] || {
-  echo "CI image ID, commit label, or platform does not match this deployment/VPS" >&2
+metadata="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}} {{.Os}}/{{.Architecture}}' "$image")"
+[[ "$metadata" == "$revision $platform" ]] || {
+  echo "CI image commit label or platform does not match this deployment/VPS" >&2
   exit 1
 }
 
@@ -137,8 +144,8 @@ rsync --archive --delete \
   "$stage/" "$deploy_dir/"
 
 "$compose" config --quiet
-echo "Using CI-built backend commit $revision ($image_id)."
-docker image tag "$image_id" retruco-backend:production
+echo "Using CI-built backend commit $revision."
+docker image tag "$image" retruco-backend:production
 
 backup_dir="$parent_dir/backups"
 mkdir -p "$backup_dir"
