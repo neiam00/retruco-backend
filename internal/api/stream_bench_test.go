@@ -42,11 +42,7 @@ func BenchmarkStreamHistory(b *testing.B) {
 			b.ReportAllocs()
 			var size int
 			for b.Loop() {
-				message, err := stream.message(p, game.CPUWork{}, baseline, time.Unix(1, 0))
-				if err != nil {
-					b.Fatal(err)
-				}
-				encoded, err := json.Marshal(message)
+				encoded, err := stream.encode(p, game.CPUWork{}, baseline, time.Unix(1, 0))
 				if err != nil {
 					b.Fatal(err)
 				}

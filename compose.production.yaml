@@ -5,6 +5,7 @@ services:
       COOKIE_SECURE: "true"
       API_PROXY_SECRET: ${API_PROXY_SECRET:?Set API_PROXY_SECRET in both API and Cloudflare Pages}
       GOMEMLIMIT: ${GOMEMLIMIT:-512MiB}
+      PASSWORD_WORK_DUTY_PERCENT: ${PASSWORD_WORK_DUTY_PERCENT:-20}
     ulimits:
       nofile:
         soft: 16384

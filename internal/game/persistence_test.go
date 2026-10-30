@@ -2,6 +2,7 @@ package game
 
 import (
 	"encoding/json"
+	"slices"
 	"testing"
 	"time"
 
@@ -49,6 +50,8 @@ func TestMatchWritePreservesFullSnapshotAndOnlyEncodesChangedHistory(t *testing.
 
 	// Bounded history can change without growing: comparing only length or the
 	// rules revision would silently discard new messages after the buffer fills.
+	next.Chat = slices.Clone(next.Chat)
+	next.CantoHistory = slices.Clone(next.CantoHistory)
 	next.Chat[0] = Chat{ID: 3, Name: "Beto", Text: "Replacement chat"}
 	next.CantoHistory[0].Event.Kind = "retruco"
 	write, err = encodeMatchWrite(next, before)

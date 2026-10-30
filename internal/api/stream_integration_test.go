@@ -140,8 +140,12 @@ func (c *streamConnection) until(t *testing.T, ctx context.Context, accept func(
 }
 
 func newStreamServer(t *testing.T) (context.Context, *httptest.Server, string, []store.User) {
+	return newStreamServerWithTimeout(t, 15*time.Second)
+}
+
+func newStreamServerWithTimeout(t *testing.T, timeout time.Duration) (context.Context, *httptest.Server, string, []store.User) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), timeout)
 	t.Cleanup(cancel)
 	repository := &streamRepository{sessions: make(map[string]store.Session), matches: make(map[string][]byte)}
 	users := []store.User{{ID: "owner", Name: "Owner"}, {ID: "guest", Name: "Guest"}, {ID: "watcher", Name: "Watcher"}}
@@ -284,4 +288,34 @@ func TestGameStreamV2ReturnsTypedHandshakeErrors(t *testing.T) {
 			_ = response.Body.Close()
 		})
 	}
+}
+
+func TestGameStreamExplicitDisconnectReleasesOnlyThatConnection(t *testing.T) {
+	ctx, server, code, users := newStreamServer(t)
+	departing := dialStream(t, ctx, server, code, users[0].ID, true)
+	_, before := departing.read(t, ctx)
+	remaining := dialStream(t, ctx, server, code, users[0].ID, true)
+	remaining.read(t, ctx)
+
+	// Keep the transport open: navigation must not depend on a browser/proxy
+	// forwarding its close handshake before the server releases this presence.
+	require.NoError(t, wsjson.Write(ctx, departing.conn, map[string]bool{"disconnect": true}))
+	readCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	for {
+		var response map[string]any
+		if err := wsjson.Read(readCtx, departing.conn, &response); err != nil {
+			break
+		}
+		// Connection registration can already have queued a normal update.
+		// A disconnect must never be processed as an invalid game command.
+		require.NotEqual(t, "error", response["type"], "disconnect is a connection lifecycle message, not an invalid game action")
+	}
+	require.NoError(t, readCtx.Err(), "the server must close the released connection promptly")
+
+	// Another tab belonging to the same player retains its own connection.
+	require.NoError(t, wsjson.Write(ctx, remaining.conn, map[string]bool{"resync": true}))
+	_, after := remaining.until(t, ctx, func(m streamWireMessage, _ game.Snapshot) bool { return m.Type == "snapshot" })
+	assert.Equal(t, before.Sequence, after.Sequence)
+	assert.Equal(t, before.State, after.State, "navigation must not fold a hand or alter the durable match")
 }

@@ -15,6 +15,7 @@ type room struct {
 	mu              sync.Mutex
 	match           *Match
 	listeners       map[chan struct{}]bool
+	voiceListeners  map[chan struct{}]bool
 	connections     map[string]playerConnection
 	controller      string
 	connectionOrder uint64
@@ -25,10 +26,12 @@ type room struct {
 }
 
 func newRoom(match *Match) *room {
+	match.trackHistories()
 	r := &room{
-		match:       match,
-		listeners:   make(map[chan struct{}]bool),
-		connections: make(map[string]playerConnection),
+		match:          match,
+		listeners:      make(map[chan struct{}]bool),
+		voiceListeners: make(map[chan struct{}]bool),
+		connections:    make(map[string]playerConnection),
 	}
 	r.updateRoomDeadline(match)
 	return r

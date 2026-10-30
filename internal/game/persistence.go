@@ -66,8 +66,20 @@ func encodeMatchWrite(match, previous *Match) (store.MatchWrite, error) {
 	if err != nil {
 		return write, err
 	}
-	write.ChatChanged = previous == nil || !sameChat(match.Chat, previous.Chat)
-	write.CantoHistoryChanged = previous == nil || !sameCantos(match.CantoHistory, previous.CantoHistory)
+	write.ChatChanged = previous == nil
+	write.CantoHistoryChanged = previous == nil
+	if previous != nil {
+		if match.chatRevision != nil && previous.chatRevision != nil {
+			write.ChatChanged = match.chatRevision != previous.chatRevision
+		} else {
+			write.ChatChanged = !sameChat(match.Chat, previous.Chat)
+		}
+		if match.cantoRevision != nil && previous.cantoRevision != nil {
+			write.CantoHistoryChanged = match.cantoRevision != previous.cantoRevision
+		} else {
+			write.CantoHistoryChanged = !sameCantos(match.CantoHistory, previous.CantoHistory)
+		}
+	}
 	if write.ChatChanged {
 		write.Chat, err = json.Marshal(match.Chat)
 		if err != nil {

@@ -58,23 +58,25 @@ type RoomOptions struct {
 }
 
 type Match struct {
-	CreatorID    string
-	CreatorName  string
-	Options      RoomOptions
-	Code         string
-	Private      bool
-	Config       rules.Config
-	Seats        []Seat
-	State        *rules.State
-	Deadline     time.Time
-	Chat         []Chat
-	Sequence     uint64
-	Recent       map[string]uint64
-	Signals      []Signal `json:"-"`
-	LastActivity time.Time
-	Expired      bool
-	Events       []GameEvent
-	CantoHistory []GameEvent
+	CreatorID     string
+	CreatorName   string
+	Options       RoomOptions
+	Code          string
+	Private       bool
+	Config        rules.Config
+	Seats         []Seat
+	State         *rules.State
+	Deadline      time.Time
+	Chat          []Chat
+	Sequence      uint64
+	Recent        map[string]uint64
+	Signals       []Signal `json:"-"`
+	LastActivity  time.Time
+	Expired       bool
+	Events        []GameEvent
+	CantoHistory  []GameEvent
+	chatRevision  *historyRevision
+	cantoRevision *historyRevision
 }
 
 type Snapshot struct {
@@ -110,6 +112,7 @@ type Host struct {
 	deploymentMu     sync.Mutex
 	listingListeners map[chan struct{}]bool
 	listingJSON      string
+	listingStream    listingStreamState
 	repository       Repository
 	log              *slog.Logger
 }
@@ -349,10 +352,8 @@ func clone(m *Match) *Match {
 	next := *m
 	next.Options.CPUSeats = append([]int(nil), m.Options.CPUSeats...)
 	next.Seats = append([]Seat{}, m.Seats...)
-	next.Chat = append([]Chat{}, m.Chat...)
 	next.Signals = append([]Signal{}, m.Signals...)
-	next.Events = append([]GameEvent{}, m.Events...)
-	next.CantoHistory = append([]GameEvent{}, m.CantoHistory...)
+	// Retained histories are immutable and copied only by their mutators.
 	next.Recent = make(map[string]uint64, len(m.Recent))
 	for key, value := range m.Recent {
 		next.Recent[key] = value
@@ -367,6 +368,9 @@ func (h *Host) commit(ctx context.Context, r *room, next *Match) error {
 		return err
 	}
 	r.match = next
+	if voiceAccessChanged(previous, next) {
+		r.notifyVoiceAccess()
+	}
 	if previous.State != nil && next.State != nil && previous.State.Revision != next.State.Revision {
 		r.recovering = false
 	}
@@ -421,6 +425,15 @@ func (h *Host) Snapshot(code, userID string, perspective int) (Snapshot, error) 
 
 // Caller holds r.mu. The returned snapshot owns its mutable view data.
 func snapshotLocked(r *room, code, userID string, perspective int, updating bool) Snapshot {
+	v := snapshotViewLocked(r, code, userID, perspective, updating)
+	v.Chat = append([]Chat{}, r.match.Chat...)
+	v.Events = copyGameEvents(r.match.Events)
+	v.CantoHistory = copyGameEvents(r.match.CantoHistory)
+	return v
+}
+
+// Shared publications add immutable histories without allocating per audience.
+func snapshotViewLocked(r *room, code, userID string, perspective int, updating bool) Snapshot {
 	m := r.match
 	seat := seatOf(m, userID)
 	if seat >= 0 {
@@ -442,11 +455,8 @@ func snapshotLocked(r *room, code, userID string, perspective int, updating bool
 		Perspective:   perspective,
 		Deadline:      m.Deadline,
 		ServerTime:    time.Now(),
-		Chat:          append([]Chat{}, m.Chat...),
 		Signals:       []Signal{},
 		Sequence:      m.Sequence,
-		Events:        append([]GameEvent{}, m.Events...),
-		CantoHistory:  append([]GameEvent{}, m.CantoHistory...),
 	}
 	v.Options.CPUSeats = append([]int(nil), m.Options.CPUSeats...)
 	if m.State != nil {
@@ -544,10 +554,7 @@ func (h *Host) HandleFromConnection(ctx context.Context, code string, user store
 		if message == "" || len([]rune(message)) > 500 {
 			return fmt.Errorf("el mensaje debe tener entre 1 y 500 caracteres")
 		}
-		next.Chat = append(next.Chat, Chat{ID: m.Sequence + 1, Name: user.Name, Text: message, Spectator: seat < 0})
-		if len(next.Chat) > 100 {
-			next.Chat = next.Chat[len(next.Chat)-100:]
-		}
+		next.appendChat(Chat{ID: m.Sequence + 1, Name: user.Name, Text: message, Spectator: seat < 0})
 	case input.Signal != "":
 		if seat < 0 || m.State == nil || m.State.Phase != rules.Playing {
 			return fmt.Errorf("no puedes hacer señas ahora")
@@ -628,6 +635,8 @@ func (m *Match) recordEvents(events []rules.Event) {
 			nextID = max(nextID, previous[len(previous)-1].ID+1)
 		}
 	}
+	added := make([]GameEvent, 0, len(events))
+	var cantos []GameEvent
 	for _, event := range events {
 		record := GameEvent{
 			ID:    nextID,
@@ -635,13 +644,15 @@ func (m *Match) recordEvents(events []rules.Event) {
 			Event: event,
 		}
 		nextID++
-		m.Events = append(m.Events, record)
+		added = append(added, record)
 		if isCanto(event) {
-			m.CantoHistory = append(m.CantoHistory, record)
+			cantos = append(cantos, record)
 		}
 	}
-	if len(m.Events) > 24 {
-		m.Events = m.Events[len(m.Events)-24:]
+	m.Events = appendRetained(m.Events, added, 24)
+	if len(cantos) > 0 {
+		m.CantoHistory = appendRetained(m.CantoHistory, cantos, 0)
+		m.cantoRevision = &historyRevision{}
 	}
 }
 
@@ -675,6 +686,9 @@ func (h *Host) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case now := <-ticker.C:
+			if err := h.publishListings(); err != nil {
+				h.log.Error("publish listings", "error", err)
+			}
 			if h.Updating() {
 				continue
 			}

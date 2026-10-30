@@ -147,17 +147,24 @@ func LegalActions(s State, seat int) []Command {
 	if cardTurn {
 		remaining := s.Remaining(seat)
 		for _, declaration := range []string{"", "flor", "a_ley", "presento_flor", "flor_flor", "con_mi_flor"} {
-			if s.MandatoryStack {
+			if declaration == "a_ley" && s.Round > 0 {
+				continue
+			}
+			if s.MandatoryStack && s.Round > 0 {
 				add(Command{Type: "burn", Declaration: declaration})
 			}
 			for _, card := range remaining {
-				add(Command{Type: "play", Card: card, Declaration: declaration})
 				if !s.MandatoryStack {
-					add(Command{Type: "burn", Card: card, Declaration: declaration})
+					add(Command{Type: "play", Card: card, Declaration: declaration})
+					if s.Round > 0 {
+						add(Command{Type: "burn", Card: card, Declaration: declaration})
+					}
 				}
-				for _, top := range remaining {
-					if top != card {
-						add(Command{Type: "stack", Card: card, Top: top, Declaration: declaration})
+				if s.Round == 1 {
+					for _, top := range remaining {
+						if top != card {
+							add(Command{Type: "stack", Card: card, Top: top, Declaration: declaration})
+						}
 					}
 				}
 			}
@@ -172,7 +179,9 @@ func LegalActions(s State, seat int) []Command {
 				add(Command{Type: "call", Kind: "ley_envido", Mode: mode, Declaration: declaration})
 			}
 			for _, amount := range []int{3, 6, 9, 100} {
-				add(Command{Type: "call", Kind: "truco", Amount: amount, Declaration: declaration})
+				if amount > s.TrucoValue && (s.TrucoValue != 1 || amount == 3) {
+					add(Command{Type: "call", Kind: "truco", Amount: amount, Declaration: declaration})
+				}
 			}
 		}
 		if !responding {
@@ -186,14 +195,34 @@ func LegalActions(s State, seat int) []Command {
 				if kind == "decline" && mode != "" {
 					continue
 				}
+				if kind == "flowers_no" && (s.Pending.Kind != "envido" || !s.Players[seat].FlorValid || s.Players[seat].Holding.Receta) {
+					continue
+				}
+				if kind == "falta" && (s.Pending.Kind == "truco" || s.Pending.Terminal) {
+					continue
+				}
 				add(Command{Type: "respond", Kind: kind, Mode: mode, Declaration: declaration})
 			}
-			for amount := 1; amount <= s.Config.Target; amount++ {
-				add(Command{Type: "respond", Kind: "raise", Amount: amount, Mode: mode, Declaration: declaration})
+			// Rejected raise candidates used to clone State and allocate errors
+			// for every integer through the target. Only enumerate amounts that
+			// can pass respond's bounds; Apply still checks all other rules.
+			if !s.Pending.Terminal {
+				if s.Pending.Kind == "truco" {
+					for _, amount := range []int{3, 6, 9, 100} {
+						if amount > s.Pending.Value {
+							add(Command{Type: "respond", Kind: "raise", Amount: amount, Mode: mode, Declaration: declaration})
+						}
+					}
+				} else if s.Pending.Value >= 0 {
+					for amount := 1; amount <= s.Config.Target-s.Pending.Value; amount++ {
+						add(Command{Type: "respond", Kind: "raise", Amount: amount, Mode: mode, Declaration: declaration})
+					}
+				}
 			}
-			add(Command{Type: "respond", Kind: "raise", Amount: 100, Mode: mode, Declaration: declaration})
 		}
-		add(Command{Type: "respond", Kind: "decline", Mode: "sin_ley", Declaration: declaration})
+		if (s.Pending.Kind == "envido" || s.Pending.Kind == "ley_envido") && (s.Ley || s.Pending.Kind == "ley_envido") {
+			add(Command{Type: "respond", Kind: "decline", Mode: "sin_ley", Declaration: declaration})
+		}
 	}
 	return legal
 }

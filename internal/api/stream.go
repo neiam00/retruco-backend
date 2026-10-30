@@ -25,14 +25,6 @@ type streamHistory struct {
 	CantoHistory *historyDelta[game.GameEvent] `json:"cantoHistory,omitempty"`
 }
 
-type streamMessage struct {
-	Type    string          `json:"type"`
-	Data    json.RawMessage `json:"data"`
-	CPU     game.CPUWork    `json:"cpu"`
-	Stream  streamPosition  `json:"stream"`
-	History *streamHistory  `json:"history,omitempty"`
-}
-
 // A stream's sequence counts sent publications, not game moves. Chat, control,
 // perspective and deployment changes all have a position. Each socket starts
 // a fresh epoch and baseline; it never resumes from an unverified old state.
@@ -42,48 +34,57 @@ type gameStream struct {
 	previous *game.Publication
 }
 
-func (s *gameStream) message(p *game.Publication, cpu game.CPUWork, baseline bool, now time.Time) (streamMessage, error) {
+// encode appends the already encoded, immutable publication without asking
+// encoding/json to scan and reformat its RawMessage for every recipient. Only
+// connection-specific fields and changed history need JSON encoding here.
+// Publication.Data is a complete object produced by game.Host.Publication's
+// json.Marshal; it never contains unvalidated client bytes.
+func (s *gameStream) encode(p *game.Publication, cpu game.CPUWork, baseline bool, now time.Time) ([]byte, error) {
 	baseline = baseline || s.previous == nil
 	position := streamPosition{Epoch: s.epoch, Sequence: s.sequence + 1}
-	message := streamMessage{Type: "snapshot", CPU: cpu, Stream: position}
-	data := append([]byte(nil), p.Data[:len(p.Data)-1]...)
-	appendField := func(name string, value any) error {
-		encoded, err := json.Marshal(value)
-		if err != nil {
-			return err
-		}
-		data = append(data, ',')
-		data = append(data, '"')
-		data = append(data, name...)
-		data = append(data, '"', ':')
-		data = append(data, encoded...)
-		return nil
-	}
-	if err := appendField("serverTime", now); err != nil {
-		return streamMessage{}, err
-	}
+	fields := struct {
+		ServerTime   time.Time         `json:"serverTime"`
+		Chat         *[]game.Chat      `json:"chat,omitempty"`
+		Events       *[]game.GameEvent `json:"events,omitempty"`
+		CantoHistory *[]game.GameEvent `json:"cantoHistory,omitempty"`
+	}{ServerTime: now}
+	var history *streamHistory
+	prefix := `{"type":"snapshot","data":`
 	if baseline {
-		for _, field := range []struct {
-			name  string
-			value any
-		}{{"chat", p.Chat}, {"events", p.Events}, {"cantoHistory", p.CantoHistory}} {
-			if err := appendField(field.name, field.value); err != nil {
-				return streamMessage{}, err
-			}
-		}
+		fields.Chat, fields.Events, fields.CantoHistory = &p.Chat, &p.Events, &p.CantoHistory
 	} else {
-		message.Type = "game_update"
-		message.Stream.BaseSequence = s.sequence
-		message.History = &streamHistory{
+		prefix = `{"type":"game_update","data":`
+		position.BaseSequence = s.sequence
+		history = &streamHistory{
 			Chat:         historyChange(s.previous.Chat, p.Chat, func(v game.Chat) uint64 { return v.ID }),
 			Events:       historyChange(s.previous.Events, p.Events, func(v game.GameEvent) uint64 { return v.ID }),
 			CantoHistory: historyChange(s.previous.CantoHistory, p.CantoHistory, func(v game.GameEvent) uint64 { return v.ID }),
 		}
 	}
-	message.Data = append(data, '}')
+	dataFields, err := json.Marshal(fields)
+	if err != nil {
+		return nil, err
+	}
+	tail, err := json.Marshal(struct {
+		CPU     game.CPUWork   `json:"cpu"`
+		Stream  streamPosition `json:"stream"`
+		History *streamHistory `json:"history,omitempty"`
+	}{CPU: cpu, Stream: position, History: history})
+	if err != nil {
+		return nil, err
+	}
+	payload := make([]byte, 0, len(prefix)+len(p.Data)+len(dataFields)+len(tail))
+	payload = append(payload, prefix...)
+	payload = append(payload, p.Data[:len(p.Data)-1]...)
+	if len(p.Data) > 2 {
+		payload = append(payload, ',')
+	}
+	payload = append(payload, dataFields[1:]...)
+	payload = append(payload, ',')
+	payload = append(payload, tail[1:]...)
 	s.sequence++
 	s.previous = p
-	return message, nil
+	return payload, nil
 }
 
 // History records are immutable and have stable IDs. Compare endpoints to skip

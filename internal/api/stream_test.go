@@ -6,9 +6,84 @@ import (
 	"time"
 
 	"github.com/neiam00/retruco-backend/internal/game"
+	"github.com/neiam00/retruco-backend/rules"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+type streamMessage struct {
+	Type    string          `json:"type"`
+	Data    json.RawMessage `json:"data"`
+	CPU     game.CPUWork    `json:"cpu"`
+	Stream  streamPosition  `json:"stream"`
+	History *streamHistory  `json:"history,omitempty"`
+}
+
+// Decode the actual wire encoder for the existing reconstruction contracts.
+func (s *gameStream) message(p *game.Publication, cpu game.CPUWork, baseline bool, now time.Time) (streamMessage, error) {
+	payload, err := s.encode(p, cpu, baseline, now)
+	if err != nil {
+		return streamMessage{}, err
+	}
+	var result streamMessage
+	err = json.Unmarshal(payload, &result)
+	return result, err
+}
+
+func TestStreamEncodingMatchesPreviousWireBytes(t *testing.T) {
+	data, err := json.Marshal(map[string]any{
+		"sequence": 7, "signals": []game.Signal{}, "host": "<Ana> & Beto\u2028\u2029",
+		"private": true, "perspective": 2, "state": map[string]any{"hand": []string{"private-card"}},
+	})
+	require.NoError(t, err)
+	originalData := string(data)
+	team := 1
+	publication := &game.Publication{Data: data,
+		Chat:         []game.Chat{{ID: 2, Text: "<first> & second\n\"quoted\"", Name: "é"}},
+		Events:       []game.GameEvent{{ID: 3, Event: rules.Event{Type: "call", Team: &team}}},
+		CantoHistory: []game.GameEvent{},
+	}
+	stamp := time.Date(2026, 10, 26, 1, 2, 3, 456000789, time.FixedZone("offset", -4*60*60))
+	actual := gameStream{epoch: "connection<epoch>\""}
+	previous := gameStream{epoch: actual.epoch}
+	for _, step := range []struct {
+		name        string
+		publication *game.Publication
+		baseline    bool
+		cpu         game.CPUWork
+	}{
+		{"baseline", publication, false, game.CPUWork{}},
+		{"unchanged histories", publication, false, game.CPUWork{Controlled: true, Seat: 2, View: &rules.View{Revision: 4}}},
+		{"appended histories", &game.Publication{Data: data, Chat: append(append([]game.Chat{}, publication.Chat...), game.Chat{ID: 4, Text: "new"}), Events: publication.Events, CantoHistory: publication.CantoHistory}, false, game.CPUWork{}},
+		{"window reset", &game.Publication{Data: data, Chat: []game.Chat{{ID: 10, Text: "after gap"}}, Events: []game.GameEvent{}, CantoHistory: nil}, false, game.CPUWork{}},
+		{"explicit resync", publication, true, game.CPUWork{}},
+	} {
+		t.Run(step.name, func(t *testing.T) {
+			wantMessage, err := referenceStreamMessage(&previous, step.publication, step.cpu, step.baseline, stamp)
+			require.NoError(t, err)
+			want, err := json.Marshal(wantMessage)
+			require.NoError(t, err)
+			got, err := actual.encode(step.publication, step.cpu, step.baseline, stamp)
+			require.NoError(t, err)
+			assert.Equal(t, string(want), string(got), "optimized encoding must preserve exact envelope, escaping and history bytes")
+			assert.Equal(t, originalData, string(step.publication.Data), "shared publication bytes must remain immutable")
+		})
+		stamp = stamp.Add(time.Second)
+	}
+}
+
+func TestStreamEncodingErrorDoesNotAdvanceCursor(t *testing.T) {
+	s := gameStream{epoch: "epoch"}
+	p := &game.Publication{Data: json.RawMessage(`{"sequence":1}`)}
+	_, err := s.encode(p, game.CPUWork{}, false, time.Date(10000, 1, 1, 0, 0, 0, 0, time.UTC))
+	require.Error(t, err)
+	assert.Zero(t, s.sequence)
+	assert.Nil(t, s.previous)
+	message, err := s.message(p, game.CPUWork{}, false, time.Unix(0, 0))
+	require.NoError(t, err)
+	assert.Equal(t, uint64(1), message.Stream.Sequence)
+	assert.Equal(t, "snapshot", message.Type)
+}
 
 func TestStreamReconstructsCoalescedAndTrimmedHistory(t *testing.T) {
 	stream := gameStream{epoch: "connection-epoch"}

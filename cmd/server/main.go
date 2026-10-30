@@ -30,6 +30,10 @@ func run(log *slog.Logger) error {
 	if err := config.LoadDevelopmentEnv(); err != nil {
 		return err
 	}
+	duty, err := passwordDuty()
+	if err != nil {
+		return err
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	config, err := pgxpool.ParseConfig(os.Getenv("DATABASE_URL"))
@@ -59,9 +63,10 @@ func run(log *slog.Logger) error {
 		origins[i] = strings.TrimSpace(origins[i])
 	}
 	server, err := api.New(ctx, api.Config{
-		Origins:       origins,
-		SecureCookies: env("COOKIE_SECURE", "true") == "true",
-		ProxySecret:   os.Getenv("API_PROXY_SECRET"),
+		Origins:                 origins,
+		PasswordWorkDutyPercent: duty,
+		SecureCookies:           env("COOKIE_SECURE", "true") == "true",
+		ProxySecret:             os.Getenv("API_PROXY_SECRET"),
 		Turnstile: api.TurnstileConfig{
 			SiteKey:     os.Getenv("TURNSTILE_SITE_KEY"),
 			SecretKey:   os.Getenv("TURNSTILE_SECRET_KEY"),

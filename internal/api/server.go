@@ -16,6 +16,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -42,11 +43,12 @@ type Repository interface {
 }
 
 type Config struct {
-	Origins       []string
-	SecureCookies bool
-	ProxySecret   string
-	Voice         VoiceConfig
-	Turnstile     TurnstileConfig
+	Origins                 []string
+	SecureCookies           bool
+	ProxySecret             string
+	Voice                   VoiceConfig
+	Turnstile               TurnstileConfig
+	PasswordWorkDutyPercent int
 }
 
 type Server struct {
@@ -63,7 +65,10 @@ type Server struct {
 	turnstileClient *http.Client
 	voiceClient     *http.Client
 	sessions        *sessionCache
-	passwordSlots   chan struct{}
+
+	passwordSlots chan struct{}
+	passwordMu    sync.Mutex
+	passwordNext  time.Time
 }
 
 type window struct {
@@ -72,6 +77,12 @@ type window struct {
 }
 
 func New(ctx context.Context, config Config, repository Repository, host *game.Host, log *slog.Logger) (*Server, error) {
+	if config.PasswordWorkDutyPercent == 0 {
+		config.PasswordWorkDutyPercent = 20
+	}
+	if config.PasswordWorkDutyPercent < 1 || config.PasswordWorkDutyPercent > 100 {
+		return nil, fmt.Errorf("password work duty percent must be between 1 and 100")
+	}
 	voiceClient, err := newVoiceClient(config.Voice)
 	if err != nil {
 		return nil, err
@@ -101,7 +112,8 @@ func New(ctx context.Context, config Config, repository Repository, host *game.H
 		turnstileClient: turnstileClient,
 		voiceClient:     voiceClient,
 		sessions:        newSessionCache(),
-		passwordSlots:   make(chan struct{}, 1),
+
+		passwordSlots: make(chan struct{}, 1),
 	}, nil
 }
 
@@ -121,6 +133,17 @@ func (s *Server) Handler() http.Handler {
 	r.Post("/api/logout", s.logout)
 	r.Get("/api/history", s.history)
 	r.Get("/api/matches", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("transport") == "2" {
+			frame, err := s.host.ListingSnapshotJSON()
+			if err != nil {
+				s.internalError(w, err)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Cache-Control", "no-cache")
+			_, _ = io.WriteString(w, frame.JSON)
+			return
+		}
 		data, err := s.host.ListingJSON()
 		if err != nil {
 			s.internalError(w, err)
@@ -361,7 +384,9 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer release()
+	started := time.Now()
 	hash, err := bcrypt.GenerateFromPassword([]byte(input.Password), 12)
+	s.passwordWorkCompleted(started)
 	if err != nil {
 		s.internalError(w, err)
 		return
@@ -401,7 +426,10 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		hash = string(s.dummyHash)
 	}
-	if compareErr := bcrypt.CompareHashAndPassword([]byte(hash), []byte(input.Password)); compareErr != nil || err != nil {
+	started := time.Now()
+	compareErr := bcrypt.CompareHashAndPassword([]byte(hash), []byte(input.Password))
+	s.passwordWorkCompleted(started)
+	if compareErr != nil || err != nil {
 		fail(w, 401, "Nombre o contraseña incorrectos.")
 		return
 	}
@@ -557,15 +585,21 @@ func (s *Server) socket(w http.ResponseWriter, r *http.Request) {
 		Input       game.Input `json:"input"`
 		Perspective *int       `json:"perspective,omitempty"`
 		Resync      bool       `json:"resync,omitempty"`
+		Disconnect  bool       `json:"disconnect,omitempty"`
 	}
 	incoming := make(chan message, 8)
+	// Only inbound application traffic proves the browser is responsive.
+	// Outbound timeout updates must not keep a stale connection alive.
+	var lastReceived atomic.Int64
+	lastReceived.Store(time.Now().UnixNano())
 	go func() {
 		defer cancel()
 		for {
 			var msg message
-			if wsjson.Read(ctx, conn, &msg) != nil {
+			if err := wsjson.Read(ctx, conn, &msg); err != nil {
 				return
 			}
+			lastReceived.Store(time.Now().UnixNano())
 			select {
 			case incoming <- msg:
 			case <-ctx.Done():
@@ -574,10 +608,18 @@ func (s *Server) socket(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 	perspective := 0
-	send := func(value any) error {
+	writePayload := func(payload []byte) error {
 		writeCtx, done := context.WithTimeout(ctx, 5*time.Second)
 		defer done()
-		return wsjson.Write(writeCtx, conn, value)
+		err := conn.Write(writeCtx, websocket.MessageText, payload)
+		return err
+	}
+	send := func(value any) error {
+		payload, err := json.Marshal(value)
+		if err != nil {
+			return err
+		}
+		return writePayload(payload)
 	}
 	stream := gameStream{epoch: rand.Text()}
 	snapshot := func(baseline bool) error {
@@ -591,11 +633,11 @@ func (s *Server) socket(w http.ResponseWriter, r *http.Request) {
 				_ = send(map[string]string{"type": "room_closed"})
 				return err
 			}
-			message, err := stream.message(value, s.host.CPUWork(code, user.ID, connectionID), baseline, time.Now())
+			payload, err := stream.encode(value, s.host.CPUWork(code, user.ID, connectionID), baseline, time.Now())
 			if err != nil {
 				return err
 			}
-			return send(message)
+			return writePayload(payload)
 		}
 		value, err := s.host.Snapshot(code, user.ID, perspective)
 		if err != nil {
@@ -621,6 +663,9 @@ func (s *Server) socket(w http.ResponseWriter, r *http.Request) {
 			if err != nil || current.ID != user.ID {
 				return
 			}
+			if time.Since(time.Unix(0, lastReceived.Load())) < 25*time.Second {
+				continue
+			}
 			pingContext, cancelPing := context.WithTimeout(ctx, 5*time.Second)
 			err = conn.Ping(pingContext)
 			cancelPing()
@@ -636,6 +681,11 @@ func (s *Server) socket(w http.ResponseWriter, r *http.Request) {
 			current, err := s.authenticate(r)
 			if err != nil || current.ID != user.ID {
 				_ = conn.Close(websocket.StatusPolicyViolation, "Sesión finalizada")
+				return
+			}
+			if msg.Disconnect {
+				// Navigation releases this socket even if a proxy delays its
+				// close handshake. Other tabs and the match remain independent.
 				return
 			}
 			if !s.allow("ws:"+user.ID, 120) {

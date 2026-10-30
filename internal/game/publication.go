@@ -41,7 +41,7 @@ func (h *Host) Publication(code, userID string, perspective int) (*Publication, 
 	if cached := r.publications[key]; cached != nil && cached.updating == updating {
 		return cached, nil
 	}
-	value := snapshotLocked(r, code, userID, perspective, updating)
+	value := snapshotViewLocked(r, code, userID, perspective, updating)
 	// Shadow these embedded fields so histories are transmitted separately and
 	// a fresh serverTime can be appended for every recipient.
 	data, err := json.Marshal(struct {
@@ -54,8 +54,8 @@ func (h *Host) Publication(code, userID string, perspective int) (*Publication, 
 	if err != nil {
 		return nil, err
 	}
-	p := &Publication{Data: data, Chat: value.Chat, Events: value.Events,
-		CantoHistory: value.CantoHistory, updating: updating}
+	p := &Publication{Data: data, Chat: wireHistory(r.match.Chat), Events: wireHistory(r.match.Events),
+		CantoHistory: wireHistory(r.match.CantoHistory), updating: updating}
 	r.publications[key] = p
 	return p, nil
 }

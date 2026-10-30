@@ -46,7 +46,10 @@ func TestAccountAndMatchPersistence(t *testing.T) {
 	host := game.New(repository, log)
 	const origin = "http://local.retruco.test"
 	server, err := api.New(ctx, api.Config{
-		Origins: []string{origin},
+		// This scenario verifies persistence across registration and immediate
+		// login; the dedicated admission tests own password duty-cycle behavior.
+		PasswordWorkDutyPercent: 100,
+		Origins:                 []string{origin},
 		Turnstile: api.TurnstileConfig{
 			SiteKey: "integration-site-key", SecretKey: "integration-secret",
 			Client: &http.Client{Transport: turnstileTransport(func(request *http.Request) (*http.Response, error) {

@@ -76,7 +76,8 @@ func TestPasswordAdmissionProtectsOtherRequestsAndRecovers(t *testing.T) {
 				}
 			})
 			server, err := api.New(t.Context(), api.Config{
-				Origins: []string{"https://retruco.test"}, ProxySecret: "test-edge",
+				PasswordWorkDutyPercent: 100,
+				Origins:                 []string{"https://retruco.test"}, ProxySecret: "test-edge",
 				Turnstile: api.TurnstileConfig{
 					SiteKey: "1x00000000000000000000AA", SecretKey: "1x0000000000000000000000000000000AA", Development: true,
 					Client: &http.Client{Transport: turnstileTransport(func(*http.Request) (*http.Response, error) {

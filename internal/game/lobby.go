@@ -61,6 +61,7 @@ func (h *Host) closeVacantRoom(ctx context.Context, r *room, match *Match) error
 	h.notifyListings()
 	h.mu.Unlock()
 	r.match = nil
+	r.notifyVoiceAccess()
 	r.deadline = time.Time{}
 	r.controller = ""
 	clear(r.connections)
@@ -83,6 +84,7 @@ func (h *Host) SubscribeListings() (<-chan struct{}, func()) {
 // Caller holds h.mu. Coalescing keeps slow browsers from blocking game actions.
 func (h *Host) notifyListings() {
 	h.listingJSON = ""
+	h.listingStream.dirty = true
 	for updates := range h.listingListeners {
 		select {
 		case updates <- struct{}{}:

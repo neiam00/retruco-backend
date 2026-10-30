@@ -205,7 +205,7 @@ The old API must remain stopped throughout migration: it does not understand
 the new columns. To roll back, stop writes, run **the new migration binary** with
 `down-to 1`, and only then start the old image. The Down migration merges the
 latest history columns back into complete snapshots, including post-upgrade
-writes. Take a fresh backup before this operation. See [capacity changes](CAPACITY.md).
+writes. Take a fresh backup before this operation.
 
 On the VPS, use `retruco-compose ps -a` and
 `retruco-compose logs --tail=100 api proxy` to investigate. Health checks do not

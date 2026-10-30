@@ -168,11 +168,12 @@ func (s *Server) voiceSocket(w http.ResponseWriter, r *http.Request) {
 	}
 	// Credential issuance can take several seconds; recheck room access before
 	// registering a peer, in case the user left or changed seats meanwhile.
-	canSpeak, err = s.host.VoiceAccess(code, user.ID)
+	canSpeak, updates, unsubscribe, err := s.host.SubscribeVoiceAccess(code, user.ID)
 	if err != nil {
 		fail(w, http.StatusNotFound, "No encontramos esa mesa.")
 		return
 	}
+	defer unsubscribe()
 	origins := make([]string, 0, len(s.config.Origins))
 	for _, origin := range s.config.Origins {
 		origins = append(origins, strings.TrimPrefix(strings.TrimPrefix(origin, "https://"), "http://"))
@@ -191,8 +192,6 @@ func (s *Server) voiceSocket(w http.ResponseWriter, r *http.Request) {
 	}
 	s.voice.join(code, member, servers)
 	defer s.voice.leave(code, member.peer.ID)
-	updates, unsubscribe := s.host.Subscribe(code)
-	defer unsubscribe()
 	incoming := make(chan voiceMessage, 8)
 	go func() {
 		defer cancel()
@@ -238,8 +237,12 @@ func (s *Server) voiceSocket(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		case message := <-member.inbox:
+			payload, err := json.Marshal(message)
+			if err != nil {
+				return
+			}
 			writeCtx, done := context.WithTimeout(ctx, 5*time.Second)
-			err = wsjson.Write(writeCtx, conn, message)
+			err = conn.Write(writeCtx, websocket.MessageText, payload)
 			done()
 			if err != nil {
 				return
