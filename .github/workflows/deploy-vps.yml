@@ -58,44 +58,67 @@ jobs:
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: ${{ runner.temp }}/retruco-go-cache
-          key: ${{ runner.os }}-${{ runner.arch }}-go-checks-v1-${{ hashFiles('Dockerfile', 'go.sum') }}-${{ github.sha }}
+          key: ${{ runner.os }}-${{ runner.arch }}-go-build-v2-${{ hashFiles('Dockerfile', 'go.sum') }}-${{ github.sha }}
           restore-keys: |
-            ${{ runner.os }}-${{ runner.arch }}-go-checks-v1-${{ hashFiles('Dockerfile', 'go.sum') }}-
+            ${{ runner.os }}-${{ runner.arch }}-go-build-v2-${{ hashFiles('Dockerfile', 'go.sum') }}-
+            ${{ runner.os }}-${{ runner.arch }}-go-build-v2-
+            ${{ runner.os }}-${{ runner.arch }}-go-checks-v1-
 
-      - name: Build backend with its Docker toolchain
+      - name: Restore Go module cache
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: ${{ runner.temp }}/retruco-go-modules
+          key: ${{ runner.os }}-${{ runner.arch }}-go-modules-v1-${{ hashFiles('go.mod', 'go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-go-modules-v1-
+
+      - name: Prepare cached Go toolchain
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
           context: .
-          target: build
+          target: toolchain
           load: true
           tags: retruco-ci
           cache-from: type=gha,scope=backend
+          # This cache now holds only the stable SDK/compiler layers.
+          cache-to: type=gha,scope=backend,mode=min
 
-      - name: Test backend with its Docker toolchain
+      - name: Build and test backend with shared Go caches
         run: |
-          mkdir -p "$RUNNER_TEMP/retruco-go-cache"
+          mkdir -p "$RUNNER_TEMP/retruco-go-cache" "$RUNNER_TEMP/retruco-go-modules" "$RUNNER_TEMP/retruco-bin"
           docker run --rm --network host \
             -e DATABASE_URL=postgres://retruco_test:disposable_ci_password@127.0.0.1:5432/retruco_test?sslmode=disable \
             -e DATABASE_TEST_URL=postgres://retruco_test:disposable_ci_password@127.0.0.1:5432/retruco_test?sslmode=disable \
             -e GOCACHE=/ci-go-cache \
+            -e GOFLAGS=-buildvcs=false \
+            --mount "type=bind,source=$GITHUB_WORKSPACE,target=/src,readonly" \
             --mount "type=bind,source=$RUNNER_TEMP/retruco-go-cache,target=/ci-go-cache" \
+            --mount "type=bind,source=$RUNNER_TEMP/retruco-go-modules,target=/go/pkg/mod" \
+            --mount "type=bind,source=$RUNNER_TEMP/retruco-bin,target=/out" \
             retruco-ci sh -ec '
+              started=$(date +%s)
+              CGO_ENABLED=0 go build -trimpath -o /out/ ./cmd/server ./cmd/migrate
+              built=$(date +%s)
               /out/migrate up
               CGO_ENABLED=1 go test -race -count=1 ./...
               go vet ./...
               go test -count=1 -tags=integration ./internal/api -run "^TestVoiceCloudflare"
+              checked=$(date +%s)
+              printf "Compilation: %ss\n\nChecks: %ss\n" "$((built - started))" "$((checked - built))" > /out/timings.txt
             '
+          tee -a "$GITHUB_STEP_SUMMARY" < "$RUNNER_TEMP/retruco-bin/timings.txt"
 
       - name: Package the tested backend for deployment
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
           context: .
-          load: true
+          target: ci-runtime
+          build-contexts: binaries=${{ runner.temp }}/retruco-bin
           tags: retruco-backend:${{ github.sha }}
           labels: org.opencontainers.image.revision=${{ github.sha }}
-          # The same builder reuses the compiled build stage above. Export all
-          # intermediate layers for the next run, without exporting twice.
-          cache-to: type=gha,scope=backend,mode=max
+          outputs: type=docker,dest=${{ runner.temp }}/retruco-image.tar
+          cache-from: type=gha,scope=backend-runtime
+          cache-to: type=gha,scope=backend-runtime,mode=min
 
       - name: Configure verified SSH access
         env:
@@ -152,12 +175,11 @@ jobs:
           set -euo pipefail
           archive="$RUNNER_TEMP/retruco-source.tar.gz"
           image_archive="$RUNNER_TEMP/retruco-image.tar.gz"
-          image="retruco-backend:$GITHUB_SHA"
           remote_archive="/tmp/retruco-deploy-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.tar.gz"
           remote_image="/tmp/retruco-image-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.tar.gz"
           remote_script="/tmp/retruco-deploy-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.sh"
           git archive --format=tar.gz --output="$archive" HEAD -- . ':(exclude).env' ':(exclude).env.*'
-          docker image save "$image" | gzip -1 > "$image_archive"
+          gzip -1 < "$RUNNER_TEMP/retruco-image.tar" > "$image_archive"
           image_sha256="$(sha256sum "$image_archive")"
           image_sha256="${image_sha256%% *}"
           scp -F "$RUNNER_TEMP/retruco-ssh/config" "$archive" "retruco-vps:$remote_archive"
@@ -170,4 +192,4 @@ jobs:
 
       - name: Remove runner credentials
         if: always()
-        run: rm -rf "$RUNNER_TEMP/retruco-ssh" "$RUNNER_TEMP/retruco-source.tar.gz" "$RUNNER_TEMP/retruco-image.tar.gz"
+        run: rm -rf "$RUNNER_TEMP/retruco-ssh" "$RUNNER_TEMP/retruco-source.tar.gz" "$RUNNER_TEMP/retruco-image.tar" "$RUNNER_TEMP/retruco-image.tar.gz" "$RUNNER_TEMP/retruco-bin"

@@ -120,19 +120,30 @@ the matching `API_PROXY_SECRET`.
 
 ## What a deployment does
 
-1. Checks the deployment script, runs its failure-path tests, builds the Docker
-   builder stage, uses its compiled `/out/migrate` binary to migrate a disposable
+1. Checks the deployment script, runs its failure-path tests, loads the cached
+   Docker `toolchain` stage (the pinned Go SDK and C compiler), and compiles the
+   server and migration binaries with shared Go caches. Uses the compiled
+   `/out/migrate` binary to migrate a disposable
    PostgreSQL 18 service, and runs
    `go test -race ./...` with `DATABASE_TEST_URL` plus `go vet ./...`.
    Migration, database, HTTP/WebSocket and race tests gate production deployment.
    The tagged Cloudflare voice integration test also verifies credential welcome,
    refresh, and failure handling without calling the real provider.
-   Checks share one container and a Go compilation cache restored across runs.
-   Tests always execute (`-count=1`); only compilation is cached. Buildx restores
-   Docker layers from the GitHub Actions cache and exports all build layers after
-   packaging the runtime image, reusing the already compiled builder stage.
+   Compilation and checks share one container, read-only checkout, module cache,
+   and compilation cache restored across runs. Tests always execute (`-count=1`);
+   only compilation and downloads are cached. VCS stamping is disabled because
+   the image's revision label identifies the exact pushed commit. The workflow
+   summary records compilation and check times separately.
+   Buildx caches stable toolchain layers separately from the small runtime image;
+   application source and compiler cache files are not loaded/exported as a
+   builder image on every commit. Standalone Docker builds copy production Go
+   directories and exclude test files, so docs/workflows/test-only changes do
+   not invalidate production compilation.
 2. Packages the production image in CI with the commit SHA as its tag and revision
-   label. Archives the exact pushed source commit and uploads it, the compressed
+   label, copying the exact compiled binaries through a named build context.
+   Exports a Docker-format image archive directly, without loading it into the
+   runner's Docker daemon and saving it again. Archives the exact pushed source
+   commit and uploads it, the compressed
    image, and the deployment script over verified SSH. No registry credentials
    are needed. Runs the script from a file with stdin closed so Docker cannot
    consume the remaining deployment commands.
