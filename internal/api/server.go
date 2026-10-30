@@ -67,6 +67,7 @@ type Server struct {
 	turnstileClient *http.Client
 	voiceClient     *http.Client
 	sessions        *sessionCache
+	streams         streamAdmission
 
 	passwordSlots chan struct{}
 	passwordMu    sync.Mutex
@@ -157,12 +158,12 @@ func (s *Server) Handler() http.Handler {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, data)
 	})
-	r.Get("/api/matches/events", s.matchEvents)
+	r.Get("/api/matches/events", s.liveStream(s.matchEvents))
 	r.Post("/api/matches", s.createMatch)
 	r.Get("/api/matches/{code}", s.matchSnapshot)
 	r.Post("/api/matches/{code}/join", s.joinMatch)
-	r.Get("/api/matches/{code}/ws", s.socket)
-	r.Get("/api/matches/{code}/voice", s.voiceSocket)
+	r.Get("/api/matches/{code}/ws", s.liveStream(s.socket))
+	r.Get("/api/matches/{code}/voice", s.liveStream(s.voiceSocket))
 	mux := http.NewServeMux()
 	mux.HandleFunc("/internal/deployment", s.deployment)
 	mux.Handle("/", r)
@@ -214,17 +215,7 @@ func (s *Server) security(next http.Handler) http.Handler {
 			fail(w, 403, "Solicitud no permitida.")
 			return
 		}
-		ip, _, err := net.SplitHostPort(r.RemoteAddr)
-		if err != nil {
-			ip = r.RemoteAddr
-		}
-		if s.config.ProxySecret != "" {
-			// Only the authenticated edge may supply a visitor address. Direct
-			// development requests always use their actual connection address.
-			if forwarded := net.ParseIP(r.Header.Get("X-Retruco-Client-IP")); forwarded != nil {
-				ip = forwarded.String()
-			}
-		}
+		ip := s.clientIP(r)
 		limit := 120
 		// Paths (including unknown routes and match codes) are attacker-controlled.
 		// Keep a fixed number of HTTP buckets per client, separate from WS users.
@@ -241,6 +232,21 @@ func (s *Server) security(next http.Handler) http.Handler {
 		r.Body = http.MaxBytesReader(w, r.Body, 8192)
 		next.ServeHTTP(w, r)
 	})
+}
+
+// Called after security has authenticated the edge's proxy secret. Direct
+// development requests always use their actual connection address.
+func (s *Server) clientIP(r *http.Request) string {
+	ip, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		ip = r.RemoteAddr
+	}
+	if s.config.ProxySecret != "" {
+		if forwarded := net.ParseIP(r.Header.Get("X-Retruco-Client-IP")); forwarded != nil {
+			return forwarded.String()
+		}
+	}
+	return ip
 }
 
 func (s *Server) allow(key string, maximum int) bool {

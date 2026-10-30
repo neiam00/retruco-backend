@@ -55,6 +55,13 @@ Run a single API instance: match ownership and WebSocket subscriptions live in
 that process, while PostgreSQL provides durability across restarts. Scaling to
 multiple instances requires distributed ownership and routing.
 
+Lobby SSE, game WebSockets, and voice WebSockets share a concurrent connection
+budget of 1,024 per API process and 32 per visitor IP, including all tabs and both
+transport versions. Saturated requests receive HTTP 429 with `Retry-After: 5`.
+Capacity is released when the handler exits; the minute request-rate window does
+not reset active connections. Review these limits when sizing shared-NAT usage
+or changing the production file-descriptor budget.
+
 ## Deployment
 
 See the [VPS deployment guide](DEPLOYMENT-VPS.md),
