@@ -2,12 +2,12 @@ package store
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/neiam00/retruco-backend/rules"
 )
 
 type User struct {
@@ -180,14 +180,19 @@ func (p *Postgres) ActiveMatches(ctx context.Context) ([][]byte, error) {
 }
 
 type HistoryEntry struct {
-	Code      string          `json:"code"`
-	Scores    [2]int          `json:"scores"`
-	Winner    int             `json:"winner"`
-	Finished  bool            `json:"finished"`
-	Expired   bool            `json:"expired"`
-	UpdatedAt time.Time       `json:"updatedAt"`
-	Team      int             `json:"team"`
-	Players   []HistoryPlayer `json:"players"`
+	Code       string          `json:"code"`
+	RoomCode   string          `json:"roomCode"`
+	GameNumber int             `json:"gameNumber"`
+	Config     rules.Config    `json:"config"`
+	Hands      int             `json:"hands"`
+	HasCPU     bool            `json:"hasCPU"`
+	Scores     [2]int          `json:"scores"`
+	Winner     int             `json:"winner"`
+	Finished   bool            `json:"finished"`
+	Expired    bool            `json:"expired"`
+	UpdatedAt  time.Time       `json:"updatedAt"`
+	Team       int             `json:"team"`
+	Players    []HistoryPlayer `json:"players"`
 }
 
 type HistoryPlayer struct {
@@ -210,38 +215,8 @@ func (p *Postgres) History(ctx context.Context, userID string) ([]HistoryEntry, 
 		if err := rows.Scan(&entry.Code, &payload, &entry.Finished, &entry.UpdatedAt); err != nil {
 			return nil, err
 		}
-		var match struct {
-			Expired bool
-			Seats   []struct {
-				ID   string
-				Name string
-				CPU  bool
-			}
-			State *struct {
-				Scores [2]int
-				Winner int
-			}
-		}
-		if err := json.Unmarshal(payload, &match); err != nil {
-			return nil, fmt.Errorf("decode match history: %w", err)
-		}
-		entry.Winner = -1
-		entry.Team = -1
-		entry.Players = []HistoryPlayer{}
-		for seat, player := range match.Seats {
-			if player.ID == "" {
-				continue
-			}
-			entry.Players = append(entry.Players, HistoryPlayer{
-				Name: player.Name, Seat: seat, Team: seat % 2, CPU: player.CPU,
-			})
-			if player.ID == userID {
-				entry.Team = seat % 2
-			}
-		}
-		entry.Expired = match.Expired
-		if match.State != nil {
-			entry.Scores, entry.Winner = match.State.Scores, match.State.Winner
+		if _, err := decodeHistory(payload, userID, &entry); err != nil {
+			return nil, err
 		}
 		result = append(result, entry)
 	}

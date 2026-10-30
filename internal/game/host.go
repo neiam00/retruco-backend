@@ -62,6 +62,9 @@ type Match struct {
 	CreatorName   string
 	Options       RoomOptions
 	Code          string
+	RecordCode    string `json:",omitempty"`
+	GameNumber    int
+	RematchVotes  []int
 	Private       bool
 	Config        rules.Config
 	Seats         []Seat
@@ -80,24 +83,28 @@ type Match struct {
 }
 
 type Snapshot struct {
-	Updating      bool         `json:"updating,omitempty"`
-	CPUController int          `json:"cpuController"`
-	CPUPaused     bool         `json:"cpuPaused"`
-	Options       RoomOptions  `json:"options"`
-	Code          string       `json:"code"`
-	Private       bool         `json:"private"`
-	Config        rules.Config `json:"config"`
-	Seats         []Seat       `json:"seats"`
-	Seat          int          `json:"seat"`
-	Perspective   int          `json:"perspective"`
-	State         *rules.View  `json:"state,omitempty"`
-	Deadline      time.Time    `json:"deadline"`
-	ServerTime    time.Time    `json:"serverTime"`
-	Chat          []Chat       `json:"chat"`
-	Signals       []Signal     `json:"signals"`
-	Sequence      uint64       `json:"sequence"`
-	Events        []GameEvent  `json:"events"`
-	CantoHistory  []GameEvent  `json:"cantoHistory"`
+	GameNumber        int          `json:"gameNumber"`
+	RematchVotes      []int        `json:"rematchVotes"`
+	Paused            bool         `json:"paused"`
+	ReconnectDeadline time.Time    `json:"reconnectDeadline"`
+	Updating          bool         `json:"updating,omitempty"`
+	CPUController     int          `json:"cpuController"`
+	CPUPaused         bool         `json:"cpuPaused"`
+	Options           RoomOptions  `json:"options"`
+	Code              string       `json:"code"`
+	Private           bool         `json:"private"`
+	Config            rules.Config `json:"config"`
+	Seats             []Seat       `json:"seats"`
+	Seat              int          `json:"seat"`
+	Perspective       int          `json:"perspective"`
+	State             *rules.View  `json:"state,omitempty"`
+	Deadline          time.Time    `json:"deadline"`
+	ServerTime        time.Time    `json:"serverTime"`
+	Chat              []Chat       `json:"chat"`
+	Signals           []Signal     `json:"signals"`
+	Sequence          uint64       `json:"sequence"`
+	Events            []GameEvent  `json:"events"`
+	CantoHistory      []GameEvent  `json:"cantoHistory"`
 }
 
 type Host struct {
@@ -350,6 +357,7 @@ func (h *Host) Join(ctx context.Context, code string, user store.User, requested
 
 func clone(m *Match) *Match {
 	next := *m
+	next.RematchVotes = append([]int(nil), m.RematchVotes...)
 	next.Options.CPUSeats = append([]int(nil), m.Options.CPUSeats...)
 	next.Seats = append([]Seat{}, m.Seats...)
 	next.Signals = append([]Signal{}, m.Signals...)
@@ -364,7 +372,14 @@ func clone(m *Match) *Match {
 func (h *Host) commit(ctx context.Context, r *room, next *Match) error {
 	previous := r.match
 	next.LastActivity = time.Now()
-	if err := h.persist(ctx, next, false, addedHumanMembers(previous, next), previous); err != nil {
+	create := recordCode(previous) != recordCode(next)
+	members := addedHumanMembers(previous, next)
+	before := previous
+	if create {
+		members = addedHumanMembers(nil, next)
+		before = nil
+	}
+	if err := h.persist(ctx, next, create, members, before); err != nil {
 		return err
 	}
 	r.match = next
@@ -379,10 +394,14 @@ func (h *Host) commit(ctx context.Context, r *room, next *Match) error {
 	r.notify()
 	if previous == nil || occupiedSeats(previous) != occupiedSeats(next) ||
 		(previous.State == nil) != (next.State == nil) ||
+		activeMatch(previous) != activeMatch(next) ||
 		(next.State != nil && next.State.Phase == rules.MatchOver) {
 		h.mu.Lock()
 		if activeMatch(previous) && !activeMatch(next) {
 			h.active--
+		}
+		if !activeMatch(previous) && activeMatch(next) {
+			h.active++
 		}
 		h.updateListing(next)
 		h.notifyListings()
@@ -443,20 +462,24 @@ func snapshotViewLocked(r *room, code, userID string, perspective int, updating 
 		perspective = 0
 	}
 	v := Snapshot{
-		Updating:      updating,
-		CPUController: r.controllerSeat(m),
-		CPUPaused:     len(m.Options.CPUSeats) > 0 && m.State != nil && m.State.Phase != rules.MatchOver && r.controller == "",
-		Options:       m.Options,
-		Code:          code,
-		Private:       m.Private,
-		Config:        m.Config,
-		Seats:         append([]Seat{}, m.Seats...),
-		Seat:          seat,
-		Perspective:   perspective,
-		Deadline:      m.Deadline,
-		ServerTime:    time.Now(),
-		Signals:       []Signal{},
-		Sequence:      m.Sequence,
+		GameNumber:        max(1, m.GameNumber),
+		RematchVotes:      append([]int{}, m.RematchVotes...),
+		Paused:            r.recovering,
+		ReconnectDeadline: r.deadline,
+		Updating:          updating,
+		CPUController:     r.controllerSeat(m),
+		CPUPaused:         len(m.Options.CPUSeats) > 0 && m.State != nil && m.State.Phase != rules.MatchOver && r.controller == "",
+		Options:           m.Options,
+		Code:              code,
+		Private:           m.Private,
+		Config:            m.Config,
+		Seats:             append([]Seat{}, m.Seats...),
+		Seat:              seat,
+		Perspective:       perspective,
+		Deadline:          m.Deadline,
+		ServerTime:        time.Now(),
+		Signals:           []Signal{},
+		Sequence:          m.Sequence,
 	}
 	v.Options.CPUSeats = append([]int(nil), m.Options.CPUSeats...)
 	if m.State != nil {
@@ -529,17 +552,20 @@ func (h *Host) HandleFromConnection(ctx context.Context, code string, user store
 		connection := r.connections[connectionID]
 		if connectionID == "" || r.controller != connectionID || connection.userID != user.ID ||
 			cpuSeat < 0 || cpuSeat >= len(m.Seats) || !m.Seats[cpuSeat].CPU ||
-			input.Chat != "" || input.Signal != "" || input.Command.Type == "leave" {
+			input.Chat != "" || input.Signal != "" || input.Command.Type == "leave" || input.Command.Type == "rematch" {
 			return fmt.Errorf("no tienes el control de ese jugador CPU")
 		}
 		seat = cpuSeat
 	}
-	if len(m.Options.CPUSeats) > 0 && r.controller == "" && input.Chat == "" && input.Signal == "" && input.Command.Type != "leave" {
+	if len(m.Options.CPUSeats) > 0 && r.controller == "" && input.Chat == "" && input.Signal == "" && input.Command.Type != "leave" && input.Command.Type != "rematch" {
 		return fmt.Errorf("esperando a un jugador para continuar con la CPU")
 	}
 	key := user.ID + ":" + input.ID
 	if _, exists := m.Recent[key]; exists {
 		return nil
+	}
+	if input.Chat == "" && input.Signal == "" && input.Command.Type == "rematch" {
+		return h.rematch(ctx, r, user, input, key)
 	}
 	if !h.Updating() && input.Chat == "" && input.Signal == "" && m.State != nil && !m.Deadline.IsZero() && !time.Now().Before(m.Deadline) {
 		if err := h.expire(ctx, r, m); err != nil {

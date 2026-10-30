@@ -86,6 +86,10 @@ func (h *Host) ConnectPlayer(code, userID, connectionID string) func() {
 		defer r.mu.Unlock()
 		delete(r.connections, connectionID)
 		if r.match != nil {
+			if !r.hasConnectedPlayer(r.match) && activeMatch(r.match) && r.match.State != nil {
+				r.recovering = true
+				r.match.Deadline = time.Time{}
+			}
 			r.updateRoomDeadline(r.match)
 			r.selectCPUController(r.match)
 			r.notify()

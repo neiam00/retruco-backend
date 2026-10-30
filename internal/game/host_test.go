@@ -96,7 +96,7 @@ func TestRestoredVacantLobbyIsDeletedAfterReconnectGrace(t *testing.T) {
 			host.Run(ctx)
 		}()
 		t.Cleanup(func() { cancel(); <-stopped })
-		time.Sleep(11 * time.Second)
+		time.Sleep(121 * time.Second)
 		synctest.Wait()
 		require.Empty(t, host.List())
 		cancel()

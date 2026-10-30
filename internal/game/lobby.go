@@ -8,7 +8,7 @@ import (
 	"github.com/neiam00/retruco-backend/rules"
 )
 
-const roomReconnectGrace = 10 * time.Second
+const roomReconnectGrace = 2 * time.Minute
 const restoreReconnectGrace = 2 * time.Minute
 
 func (r *room) hasConnectedPlayer(match *Match) bool {
@@ -40,7 +40,7 @@ func (h *Host) closeVacantRoom(ctx context.Context, r *room, match *Match) error
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	if match.State == nil {
-		if err := h.repository.DeleteLobby(ctx, match.Code); err != nil {
+		if err := h.repository.DeleteLobby(ctx, recordCode(match)); err != nil {
 			h.log.Error("delete lobby", "code", match.Code, "error", err)
 			return fmt.Errorf("no se pudo cerrar la mesa. Inténtalo de nuevo")
 		}

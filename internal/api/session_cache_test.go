@@ -164,6 +164,10 @@ func (r *sessionRepository) History(context.Context, string) ([]store.HistoryEnt
 	return []store.HistoryEntry{}, nil
 }
 
+func (r *sessionRepository) Statistics(context.Context, string) (store.Statistics, error) {
+	return store.Statistics{Partners: []store.PartnerStatistics{}}, nil
+}
+
 func sessionRequest(handler http.Handler, method, path, token string) *httptest.ResponseRecorder {
 	r := httptest.NewRequest(method, path, strings.NewReader(`{}`))
 	r.Header.Set("Origin", "https://retruco.test")

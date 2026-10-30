@@ -47,7 +47,7 @@ func TestDeploymentNoticePausesPlayAndVacancyTimersUntilCancelled(t *testing.T) 
 		require.NoError(t, err)
 		assert.False(t, after.Updating)
 		assert.Equal(t, before.State, after.State)
-		assert.WithinDuration(t, time.Now().Add(21*time.Second), after.Deadline, time.Millisecond)
+		assert.WithinDuration(t, time.Now().Add(30*time.Second), after.Deadline, time.Millisecond)
 		assert.NotEmpty(t, updates, "cancelling the notice must notify returning players")
 	})
 }

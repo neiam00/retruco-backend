@@ -13,6 +13,7 @@ import (
 )
 
 func (h *Host) persist(ctx context.Context, match *Match, create bool, members []string, previous ...*Match) error {
+	code := recordCode(match)
 	finished := match.Expired || (match.State != nil && match.State.Phase == rules.MatchOver)
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
@@ -26,9 +27,9 @@ func (h *Host) persist(ctx context.Context, match *Match, create bool, members [
 		write, err = encodeMatchWrite(match, before)
 		if err == nil {
 			if create {
-				err = repository.CreateMatchParts(ctx, match.Code, write, members)
+				err = repository.CreateMatchParts(ctx, code, write, members)
 			} else {
-				err = repository.SaveMatchParts(ctx, match.Code, write, finished, members)
+				err = repository.SaveMatchParts(ctx, code, write, finished, members)
 			}
 		}
 	} else {
@@ -36,9 +37,9 @@ func (h *Host) persist(ctx context.Context, match *Match, create bool, members [
 		payload, err = json.Marshal(match)
 		if err == nil {
 			if create {
-				err = h.repository.CreateMatch(ctx, match.Code, payload, members)
+				err = h.repository.CreateMatch(ctx, code, payload, members)
 			} else {
-				err = h.repository.SaveMatch(ctx, match.Code, payload, finished, members)
+				err = h.repository.SaveMatch(ctx, code, payload, finished, members)
 			}
 		}
 	}

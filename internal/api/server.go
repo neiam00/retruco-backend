@@ -40,6 +40,7 @@ type Repository interface {
 	Session(context.Context, string) (store.Session, error)
 	DeleteSession(context.Context, string) error
 	History(context.Context, string) ([]store.HistoryEntry, error)
+	Statistics(context.Context, string) (store.Statistics, error)
 }
 
 type Config struct {
@@ -132,6 +133,8 @@ func (s *Server) Handler() http.Handler {
 	r.Post("/api/login", s.login)
 	r.Post("/api/logout", s.logout)
 	r.Get("/api/history", s.history)
+	r.Get("/api/statistics", s.statistics)
+	r.Get("/api/matches/resume", s.resumableMatches)
 	r.Get("/api/matches", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("transport") == "2" {
 			frame, err := s.host.ListingSnapshotJSON()
@@ -467,6 +470,31 @@ func (s *Server) history(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, history)
+}
+
+func (s *Server) statistics(w http.ResponseWriter, r *http.Request) {
+	user, ok := s.requireUser(w, r)
+	if !ok {
+		return
+	}
+	if !user.Registered {
+		fail(w, 403, "Crea una cuenta para guardar tus estadísticas.")
+		return
+	}
+	statistics, err := s.store.Statistics(r.Context(), user.ID)
+	if err != nil {
+		s.internalError(w, err)
+		return
+	}
+	writeJSON(w, 200, statistics)
+}
+
+func (s *Server) resumableMatches(w http.ResponseWriter, r *http.Request) {
+	user, ok := s.requireUser(w, r)
+	if !ok {
+		return
+	}
+	writeJSON(w, 200, s.host.Resumable(user.ID))
 }
 
 func (s *Server) createMatch(w http.ResponseWriter, r *http.Request) {
