@@ -1,6 +1,7 @@
 package rules
 
-func (s *State) settle(handWinner int) {
+func (s *State) settle(handWinner int, reason string) {
+	defer s.recordHand(s.Scores, reason)
 	s.HandWinner = handWinner
 	s.Phase = HandOver
 	s.Pending, s.Suspended = nil, nil

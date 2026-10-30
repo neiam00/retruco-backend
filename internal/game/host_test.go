@@ -419,6 +419,8 @@ func TestCantoHistorySurvivesTheNextHandAndRestart(t *testing.T) {
 
 		secondHand := cut(t, host, code, players)
 		assert.Equal(t, view.CantoHistory, secondHand.CantoHistory)
+		require.NotNil(t, view.State.LastHand)
+		assert.Equal(t, view.State.LastHand, secondHand.State.LastHand, "a restored next hand retains its public recap")
 		require.NoError(t, host.Handle(t.Context(), code, players[secondHand.State.Turn], game.Input{
 			ID: "second-truco", Revision: secondHand.State.Revision, Command: rules.Command{Type: "call", Kind: "truco"},
 		}))
@@ -427,6 +429,7 @@ func TestCantoHistorySurvivesTheNextHandAndRestart(t *testing.T) {
 		restored, err := restarted.Snapshot(code, "spectator", 0)
 		require.NoError(t, err)
 		require.Len(t, restored.CantoHistory, 3)
+		assert.Equal(t, view.State.LastHand, restored.State.LastHand, "restart preserves the last finished hand")
 		assert.Equal(t, view.CantoHistory, restored.CantoHistory[:2])
 		assert.Equal(t, 2, restored.CantoHistory[2].Hand)
 	})

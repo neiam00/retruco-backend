@@ -50,6 +50,7 @@ type Wager struct {
 // only client-facing representation. Seats increase counter-clockwise; teammates
 // occupy alternating seats in four-player matches.
 type State struct {
+	LastHand       *HandRecap `json:",omitempty"`
 	Config         Config
 	Phase          Phase
 	Revision       uint64
@@ -151,6 +152,7 @@ func StartHand(s State, deck []Card) (State, error) {
 		dealer = s.right(dealer)
 	}
 	next := State{
+		LastHand:     s.LastHand,
 		Config:       s.Config,
 		Phase:        Cutting,
 		Revision:     s.Revision + 1,
@@ -194,6 +196,7 @@ func Apply(s State, seat int, command Command) (State, []Event, error) {
 	case "leave":
 		next.Winner = 1 - next.Team(seat)
 		next.Phase = MatchOver
+		next.recordHand(s.Scores, "forfeit")
 	case "cut":
 		if next.Phase != Cutting || seat != next.Turn || command.Cut < 1 || command.Cut >= 40 {
 			err = fmt.Errorf("invalid cut")

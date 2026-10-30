@@ -105,14 +105,17 @@ func (s *State) advanceCards() {
 	}
 	if s.MandatoryStack {
 		winner := s.roundWinner(2)
+		reason := "mandatory_top"
 		if winner < 0 {
 			s.revealBottoms()
 			winner = s.roundWinner(1)
+			reason = "mandatory_bottom"
 		}
 		if winner < 0 {
 			winner = s.Mano
+			reason = "mano_tie"
 		}
-		s.settle(s.Team(winner))
+		s.settle(s.Team(winner), reason)
 		return
 	}
 	stacked, firstStack := 0, -1
@@ -153,14 +156,18 @@ func (s *State) advanceCards() {
 			}
 		}
 		if visibleCardsDecide {
-			s.settle(s.Team(first))
+			s.settle(s.Team(first), "visible_first_and_third")
 			return
 		}
 		s.revealBottoms()
 	}
 	first, second := s.roundWinner(0), s.roundWinner(1)
 	if second < 0 || s.Team(first) == s.Team(second) {
-		s.settle(s.Team(first))
+		reason := "two_tricks"
+		if second < 0 {
+			reason = "first_and_tie"
+		}
+		s.settle(s.Team(first), reason)
 		return
 	}
 	if s.Round == 1 {
@@ -169,9 +176,9 @@ func (s *State) advanceCards() {
 	}
 	third := s.roundWinner(2)
 	if third < 0 {
-		s.settle(s.Team(first))
+		s.settle(s.Team(first), "third_tie")
 	} else {
-		s.settle(s.Team(third))
+		s.settle(s.Team(third), "third_trick")
 	}
 }
 

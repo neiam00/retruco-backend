@@ -39,7 +39,7 @@ func (s *State) beginPrivo() {
 	// A privando team's flor wins immediately. If both qualify, mano wins.
 	for _, team := range []int{s.Team(s.Mano), 1 - s.Team(s.Mano)} {
 		if s.Privando[team] && s.teamHasFlor(team, false) {
-			s.finishPrivo("flor", team, 3)
+			s.finishPrivo("flor", team, 3, "privo_flor")
 			return
 		}
 	}
@@ -71,7 +71,7 @@ func (s *State) respondPrivo(seat int, command Command) error {
 	case "decline":
 		s.EnvidoWinner = s.Pending.Caller
 		s.Envido.Value = 1
-		s.finishPrivo("envido", s.Pending.Caller, 1)
+		s.finishPrivo("envido", s.Pending.Caller, 1, "privo_declined")
 	case "present_flor":
 		if !s.Players[seat].FlorValid {
 			return fmt.Errorf("presenting flor requires your own valid flor")
@@ -79,7 +79,7 @@ func (s *State) respondPrivo(seat int, command Command) error {
 		s.Players[seat].FlorDeclared = true
 		s.Envido = Wager{}
 		s.EnvidoCanceled = true
-		s.finishPrivo("flor", team, 3)
+		s.finishPrivo("flor", team, 3, "flor_presented")
 	default:
 		return fmt.Errorf("accept privo, decline, or present flor")
 	}
@@ -87,7 +87,8 @@ func (s *State) respondPrivo(seat int, command Command) error {
 }
 
 // These outcomes end the hand without awarding its cancelled truco or envido.
-func (s *State) finishPrivo(kind string, team, points int) {
+func (s *State) finishPrivo(kind string, team, points int, reason string) {
+	defer s.recordHand(s.Scores, reason)
 	s.Phase, s.HandWinner = HandOver, team
 	s.Pending, s.Suspended = nil, nil
 	s.Payouts = nil

@@ -21,6 +21,7 @@ type HandCard struct {
 }
 
 type View struct {
+	LastHand       *HandRecap     `json:"lastHand,omitempty"`
 	Version        string         `json:"version"`
 	Revision       uint64         `json:"revision"`
 	Config         Config         `json:"config"`
@@ -54,6 +55,7 @@ type View struct {
 // visibility but never legal actions. A negative perspective is public-only.
 func ViewFor(s State, perspective int, spectator bool) View {
 	v := View{Version: Version, Revision: s.Revision, Config: s.Config, Phase: s.Phase,
+		LastHand:   copyHandRecap(s.LastHand),
 		HandNumber: s.HandNumber, Dealer: s.Dealer, Mano: s.Mano, Turn: s.Turn,
 		Round: s.Round, Scores: s.Scores, Winner: s.Winner, HandWinner: s.HandWinner,
 		TrucoValue: s.TrucoValue, MandatoryStack: s.MandatoryStack,

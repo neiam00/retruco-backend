@@ -141,4 +141,9 @@ func TestSimultaneousUncontestedFloresEndMatchForManoBeforeValePartida(t *testin
 	assert.Equal(t, 0, s.HandWinner)
 	assert.Equal(t, 1, s.Winner)
 	assert.Equal(t, [2]int{13, 13}, s.Scores)
+	if assert.NotNil(t, s.LastHand) {
+		assert.Equal(t, 0, s.LastHand.Winner, "winning the cards does not guarantee winning the match")
+		assert.Equal(t, 1, s.LastHand.MatchWinner)
+		assert.Equal(t, []rules.Payout{{Kind: "flor", Team: 0, Points: 3}, {Kind: "flor", Team: 1, Points: 3}}, s.LastHand.Payouts)
+	}
 }

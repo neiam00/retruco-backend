@@ -99,6 +99,9 @@ func TestTrucoRaisesAndInterruption(t *testing.T) {
 	s = apply(t, s, 0, rules.Command{Type: "respond", Kind: "raise", Amount: 9})
 	s = apply(t, s, 1, rules.Command{Type: "respond", Kind: "decline"})
 	assert.Equal(t, [2]int{7, 0}, s.Scores, "4 envido plus previous 3-point truco")
+	require.NotNil(t, s.LastHand)
+	assert.Equal(t, "truco_declined", s.LastHand.Reason)
+	assert.Equal(t, []rules.Payout{{Kind: "envido", Team: 0, Points: 4}, {Kind: "truco", Team: 0, Points: 3}}, s.LastHand.Payouts)
 }
 
 func TestEnvidoCapAndTerminalFalta(t *testing.T) {
@@ -133,6 +136,9 @@ func TestLeyScoresBeforeFlorAndEndsMatch(t *testing.T) {
 	assert.Equal(t, 0, s.Winner)
 	assert.Equal(t, [2]int{12, 11}, s.Scores)
 	assert.Equal(t, []rules.Payout{{Kind: "envido", Team: 0, Points: 2}}, s.Payouts)
+	require.NotNil(t, s.LastHand)
+	assert.Equal(t, [2]int{10, 11}, s.LastHand.ScoresBefore)
+	assert.Equal(t, s.Payouts, s.LastHand.Payouts, "recap must not include flor or truco after the match was won")
 }
 
 func TestOrdinaryEnvidoWithFlorWordingPreservesCallerAndOpposingFlorBlocks(t *testing.T) {

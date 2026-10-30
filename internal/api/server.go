@@ -29,6 +29,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/neiam00/retruco-backend/internal/game"
+	"github.com/neiam00/retruco-backend/internal/learning"
 	"github.com/neiam00/retruco-backend/internal/store"
 	"github.com/neiam00/retruco-backend/rules"
 )
@@ -133,6 +134,7 @@ func (s *Server) Handler() http.Handler {
 	r.Post("/api/login", s.login)
 	r.Post("/api/logout", s.logout)
 	r.Get("/api/history", s.history)
+	r.Get("/api/tutorial", s.tutorial)
 	r.Get("/api/statistics", s.statistics)
 	r.Get("/api/matches/resume", s.resumableMatches)
 	r.Get("/api/matches", func(w http.ResponseWriter, r *http.Request) {
@@ -453,6 +455,17 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 	// #nosec G124 -- Cookie deletion preserves the deployment-configured Secure setting used when issuing the cookie.
 	http.SetCookie(w, &http.Cookie{Name: "retruco_session", Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: s.config.SecureCookies, SameSite: http.SameSiteLaxMode})
 	writeJSON(w, 200, map[string]bool{"ok": true})
+}
+
+func (s *Server) tutorial(w http.ResponseWriter, r *http.Request) {
+	payload, err := learning.JSON()
+	if err != nil {
+		s.internalError(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "public, max-age=300")
+	_, _ = w.Write(payload)
 }
 
 func (s *Server) history(w http.ResponseWriter, r *http.Request) {

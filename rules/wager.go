@@ -140,7 +140,7 @@ func (s *State) respond(seat int, c Command) error {
 		if wager.Kind == "truco" {
 			s.TrucoValue = wager.Previous
 			s.Pending = nil
-			s.settle(wager.Caller)
+			s.settle(wager.Caller, "truco_declined")
 		} else {
 			if wager.Kind == "flor" {
 				// Con mi flor me achico forfeits only the speaker's flor.
