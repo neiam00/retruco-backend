@@ -10,6 +10,7 @@ import unittest
 
 SCRIPT = Path(__file__).resolve().parents[1] / "deploy-vps.sh"
 REVISION = "a" * 40
+IMAGE_ID = "sha256:" + "b" * 64
 
 
 class DeploymentTests(unittest.TestCase):
@@ -53,14 +54,41 @@ case "$*" in
     if [[ "${MOCK_FAIL:-}" == legacy-turn ]]; then printf 'turn\\n'; fi
     ;;
   "ps -q db") printf 'database-container\\n' ;;
-  "build api migrate") [[ "${MOCK_FAIL:-}" != build ]] || exit 1 ;;
   "exec -T db pg_dump -U retruco -d retruco -Fc")
     if [[ "${MOCK_DRAIN_STDIN:-}" == 1 ]]; then cat > /dev/null; fi
     [[ "${MOCK_FAIL:-}" != backup ]] || exit 1
     printf 'database-recovery-snapshot\\n'
     ;;
-  "run --rm --no-deps migrate") [[ "${MOCK_FAIL:-}" != migration ]] || exit 1 ;;
+  "run --rm --pull never --no-deps migrate") [[ "${MOCK_FAIL:-}" != migration ]] || exit 1 ;;
   "exec -T api sh -c "*) [[ "${MOCK_FAIL:-}" != local-health ]] || exit 1 ;;
+esac
+""",
+        )
+        self.executable(
+            self.bin / "docker",
+            """#!/usr/bin/env bash
+set -eu
+printf 'docker %s\\n' "$*" >> "$MOCK_LOG"
+case "$*" in
+  "image load --input "*)
+    if [[ "${MOCK_DRAIN_STDIN:-}" == 1 ]]; then cat > /dev/null; fi
+    [[ "${MOCK_FAIL:-}" != image-load ]] || exit 1
+    ;;
+  "version --format "*) printf 'linux/amd64\\n' ;;
+  "image inspect --format "*)
+    [[ "${MOCK_FAIL:-}" != image-missing ]] || exit 1
+    image_id="$MOCK_IMAGE_ID"
+    revision="$MOCK_REVISION"
+    platform=linux/amd64
+    case "${MOCK_FAIL:-}" in
+      image-id) image_id=sha256:wrong ;;
+      image-revision) revision=wrong ;;
+      image-platform) platform=linux/arm64 ;;
+    esac
+    printf '%s %s %s\\n' "$image_id" "$revision" "$platform"
+    ;;
+  "image tag "*) [[ "${MOCK_FAIL:-}" != image-tag ]] || exit 1 ;;
+  *) exit 1 ;;
 esac
 """,
         )
@@ -109,6 +137,8 @@ test "${MOCK_FAIL:-}" != public-health
         self.archive = self.root / "source.tar.gz"
         with tarfile.open(self.archive, "w:gz") as archive:
             archive.add(source, arcname=".")
+        self.image_archive = self.root / "image.tar.gz"
+        self.image_archive.write_bytes(b"CI-built image archive")
         self.env = {
             **os.environ,
             "PATH": f"{self.bin}{os.pathsep}{os.environ['PATH']}",
@@ -116,6 +146,8 @@ test "${MOCK_FAIL:-}" != public-health
             "RETRUCO_COMPOSE": str(self.compose),
             "MOCK_LOG": str(self.log),
             "MOCK_ALLOWED_ORIGINS": "https://cards.example.test,https://other.example.test",
+            "MOCK_IMAGE_ID": IMAGE_ID,
+            "MOCK_REVISION": REVISION,
         }
 
     @staticmethod
@@ -124,9 +156,10 @@ test "${MOCK_FAIL:-}" != public-health
         path.chmod(0o755)
 
     def deploy(self, fail="", streamed=False):
-        command = ["bash", str(SCRIPT), str(self.archive), REVISION]
+        arguments = [str(self.archive), REVISION, str(self.image_archive), IMAGE_ID]
+        command = ["bash", str(SCRIPT), *arguments]
         if streamed:
-            command = ["bash", "-s", "--", str(self.archive), REVISION]
+            command = ["bash", "-s", "--", *arguments]
         result = subprocess.run(
             command,
             input=SCRIPT.read_text() if streamed else None,
@@ -137,6 +170,7 @@ test "${MOCK_FAIL:-}" != public-health
         )
         self.events = self.log.read_text().splitlines()
         self.assertFalse(self.archive.exists(), result.stderr)
+        self.assertFalse(self.image_archive.exists(), result.stderr)
         self.assertFalse(list(self.root.glob(".deploy-source.*")))
         return result
 
@@ -157,23 +191,56 @@ test "${MOCK_FAIL:-}" != public-health
         self.assertEqual(backups[0].read_text(), "database-recovery-snapshot\n")
         stop = self.events.index("stop api")
         backup = self.events.index("exec -T db pg_dump -U retruco -d retruco -Fc")
-        migration = self.events.index("run --rm --no-deps migrate")
-        self.assertLess(self.events.index("build api migrate"), stop)
+        migration = self.events.index("run --rm --pull never --no-deps migrate")
+        load = self.events.index(f"docker image load --input {self.image_archive}")
+        tag = self.events.index(f"docker image tag {IMAGE_ID} retruco-backend:production")
         notice = self.events.index('notice:{"updating":true}')
-        self.assertLess(self.events.index("build api migrate"), notice)
+        self.assertLess(load, tag)
+        self.assertLess(tag, notice)
+        self.assertFalse(any("build api migrate" in event for event in self.events))
         self.assertLess(notice, self.events.index("sleep 10"))
         self.assertLess(self.events.index("sleep 10"), stop)
         self.assertLess(stop, backup)
         self.assertLess(backup, migration)
-        self.assertLess(migration, self.events.index("up -d --no-build --no-deps api"))
+        self.assertLess(migration, self.events.index("up -d --no-build --pull never --no-deps api"))
         self.assertIn("up -d --no-build --no-deps --force-recreate proxy", self.events)
         self.assertIn("public-health", self.events)
 
-    def test_build_failure_does_not_stop_running_api(self):
-        result = self.deploy("build")
+    def test_image_load_failure_does_not_replace_source_or_stop_running_api(self):
+        result = self.deploy("image-load")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertTrue((self.app / "obsolete.go").exists())
+        self.assertNotIn("stop api", self.events)
+        self.assertNotIn("run --rm --pull never --no-deps migrate", self.events)
+        self.assertNotIn('notice:{"updating":true}', self.events)
+        self.assert_server_files_preserved()
+
+    def assert_image_rejected(self, failure):
+        result = self.deploy(failure)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(f"docker image load --input {self.image_archive}", self.events)
+        self.assertTrue((self.app / "obsolete.go").exists())
+        self.assertNotIn("stop api", self.events)
+        self.assertNotIn('notice:{"updating":true}', self.events)
+        self.assertFalse(any(event.startswith("docker image tag ") for event in self.events))
+        self.assert_server_files_preserved()
+
+    def test_missing_expected_image_does_not_interrupt_players(self):
+        self.assert_image_rejected("image-missing")
+
+    def test_mismatched_image_id_does_not_interrupt_players(self):
+        self.assert_image_rejected("image-id")
+
+    def test_wrong_image_commit_does_not_interrupt_players(self):
+        self.assert_image_rejected("image-revision")
+
+    def test_incompatible_image_platform_does_not_interrupt_players(self):
+        self.assert_image_rejected("image-platform")
+
+    def test_image_tag_failure_keeps_existing_api_and_revision(self):
+        result = self.deploy("image-tag")
         self.assertNotEqual(result.returncode, 0)
         self.assertNotIn("stop api", self.events)
-        self.assertNotIn("run --rm --no-deps migrate", self.events)
         self.assertNotIn('notice:{"updating":true}', self.events)
         self.assert_server_files_preserved()
 
@@ -200,7 +267,7 @@ test "${MOCK_FAIL:-}" != public-health
         result = self.deploy("origins")
         self.assertNotEqual(result.returncode, 0)
         self.assertTrue((self.app / "obsolete.go").exists())
-        self.assertNotIn("build api migrate", self.events)
+        self.assertNotIn(f"docker image load --input {self.image_archive}", self.events)
         self.assertNotIn("stop api", self.events)
         self.assert_server_files_preserved()
 
@@ -220,7 +287,7 @@ test "${MOCK_FAIL:-}" != public-health
         self.assertIn("Retire the local Coturn", result.stderr)
         self.assertTrue((self.app / "obsolete.go").exists())
         self.assertFalse((self.app / "new.go").exists())
-        self.assertNotIn("build api migrate", self.events)
+        self.assertNotIn(f"docker image load --input {self.image_archive}", self.events)
         self.assertNotIn("stop api", self.events)
         self.assert_server_files_preserved()
 
@@ -229,7 +296,7 @@ test "${MOCK_FAIL:-}" != public-health
         self.assertNotEqual(result.returncode, 0)
         self.assertNotIn("stop api", self.events)
         self.assertIn('notice:{"updating":false}', self.events)
-        self.assertNotIn("run --rm --no-deps migrate", self.events)
+        self.assertNotIn("run --rm --pull never --no-deps migrate", self.events)
 
     def test_cancelled_notice_resumes_play_without_stopping_api(self):
         result = self.deploy("notice-wait")
@@ -249,8 +316,8 @@ test "${MOCK_FAIL:-}" != public-health
         result = self.deploy(streamed=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual((self.app / ".deployed-revision").read_text(), REVISION + "\n")
-        self.assertIn("run --rm --no-deps migrate", self.events)
-        self.assertIn("up -d --no-build --no-deps api", self.events)
+        self.assertIn("run --rm --pull never --no-deps migrate", self.events)
+        self.assertIn("up -d --no-build --pull never --no-deps api", self.events)
         self.assertIn("public-health", self.events)
         self.assertEqual(len(list((self.root / "backups").glob("*.dump"))), 1)
 
@@ -258,7 +325,7 @@ test "${MOCK_FAIL:-}" != public-health
         result = self.deploy("backup")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("up -d --no-build --no-deps --no-recreate api", self.events)
-        self.assertNotIn("run --rm --no-deps migrate", self.events)
+        self.assertNotIn("run --rm --pull never --no-deps migrate", self.events)
         self.assertEqual(list((self.root / "backups").iterdir()), [])
         self.assert_server_files_preserved()
 
@@ -266,7 +333,7 @@ test "${MOCK_FAIL:-}" != public-health
         result = self.deploy("migration")
         self.assertNotEqual(result.returncode, 0)
         self.assertNotIn("up -d --no-build --no-deps --no-recreate api", self.events)
-        self.assertNotIn("up -d --no-build --no-deps api", self.events)
+        self.assertNotIn("up -d --no-build --pull never --no-deps api", self.events)
         self.assertEqual(len(list((self.root / "backups").glob("*.dump"))), 1)
         self.assert_server_files_preserved()
 

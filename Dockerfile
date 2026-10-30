@@ -1,4 +1,5 @@
 FROM golang:1.27.3-alpine AS build
+RUN apk add --no-cache build-base
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download

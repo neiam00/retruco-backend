@@ -5,3 +5,4 @@
 .env.*
 bin
 coverage.out
+**/__pycache__

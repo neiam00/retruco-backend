@@ -3,22 +3,25 @@
 set -Eeuo pipefail
 umask 077
 
-archive="${1:?Usage: deploy-vps.sh SOURCE_ARCHIVE COMMIT_SHA}"
+archive="${1:?Usage: deploy-vps.sh SOURCE_ARCHIVE COMMIT_SHA IMAGE_ARCHIVE IMAGE_ID}"
 revision="${2:?Supply the deployed commit SHA}"
+image_archive="${3:?Supply the CI-built image archive}"
+image_id="${4:?Supply the CI-built image ID}"
 deploy_dir="${RETRUCO_DEPLOY_DIR:-/opt/retruco/backend}"
 compose="${RETRUCO_COMPOSE:-/usr/local/sbin/retruco-compose}"
 public_health="${RETRUCO_HEALTH_URL:-}"
 
 [[ "$revision" =~ ^[a-f0-9]{40}$ ]] || { echo "Invalid commit SHA" >&2; exit 1; }
+[[ "$image_id" =~ ^sha256:[a-f0-9]{64}$ ]] || { echo "Invalid image ID" >&2; exit 1; }
 [[ "$deploy_dir" = /* && "$deploy_dir" != / && -d "$deploy_dir" ]] || { echo "Deployment directory is missing or invalid" >&2; exit 1; }
-[[ -f "$archive" && -x "$compose" ]] || { echo "Archive or VPS Compose helper is missing" >&2; exit 1; }
+[[ -f "$archive" && -f "$image_archive" && -x "$compose" ]] || { echo "Source/image archive or VPS Compose helper is missing" >&2; exit 1; }
 [[ -f "$deploy_dir/.env.production" && -f "$deploy_dir/compose.vps.yaml" &&
    -f "$deploy_dir/deploy/nginx.vps.conf.template" ]] || {
   echo "Complete the VPS guide first: .env.production, compose.vps.yaml and the VPS NGINX template are required." >&2
   exit 1
 }
 
-for tool in flock rsync tar curl; do
+for tool in flock rsync tar curl docker; do
   command -v "$tool" > /dev/null || { echo "Missing VPS command: $tool" >&2; exit 1; }
 done
 parent_dir="$(dirname "$deploy_dir")"
@@ -32,6 +35,8 @@ deployment_complete=0
 notice_sent=0
 
 notify_update() {
+  # Expand the proxy secret inside the container, never in the host shell.
+  # shellcheck disable=SC2016
   "$compose" exec -T api sh -c '
     health=$(wget -q -T 10 -O - --header="X-Retruco-Proxy-Secret: $API_PROXY_SECRET" http://127.0.0.1:8080/api/health) || exit 1
     case "$health" in *\"deploymentNotices\":true*) ;; *) exit 44 ;; esac
@@ -62,7 +67,7 @@ cleanup() {
     fi
   fi
   rm -rf -- "$stage"
-  rm -f -- "$archive"
+  rm -f -- "$archive" "$image_archive"
   exit "$status"
 }
 trap cleanup EXIT
@@ -110,6 +115,16 @@ fi
 tar -xzf "$archive" -C "$stage"
 [[ -f "$stage/Dockerfile" && -f "$stage/compose.yaml" ]] || { echo "Archive is not the backend repository" >&2; exit 1; }
 
+# Load and verify the exact CI artifact before changing source or interrupting
+# players. Comparing native platforms also rejects an incompatible runner/VPS.
+docker image load --input "$image_archive" < /dev/null
+platform="$(docker version --format '{{.Server.Os}}/{{.Server.Arch}}')"
+metadata="$(docker image inspect --format '{{.Id}} {{index .Config.Labels "org.opencontainers.image.revision"}} {{.Os}}/{{.Architecture}}' "$image_id")"
+[[ "$metadata" == "$image_id $revision $platform" ]] || {
+  echo "CI image ID, commit label, or platform does not match this deployment/VPS" >&2
+  exit 1
+}
+
 # Only application source is managed here. Preserve host secrets and operator files.
 # Excluded destination files are also protected from rsync's --delete.
 rsync --archive --delete \
@@ -122,8 +137,8 @@ rsync --archive --delete \
   "$stage/" "$deploy_dir/"
 
 "$compose" config --quiet
-echo "Building backend commit $revision while the current API continues running."
-"$compose" build api migrate
+echo "Using CI-built backend commit $revision ($image_id)."
+docker image tag "$image_id" retruco-backend:production
 
 backup_dir="$parent_dir/backups"
 mkdir -p "$backup_dir"
@@ -157,13 +172,14 @@ mv "$backup.partial" "$backup"
 echo "Database backup saved at $backup"
 
 migration_started=1
-"$compose" run --rm --no-deps migrate < /dev/null
-"$compose" up -d --no-build --no-deps api
+"$compose" run --rm --pull never --no-deps migrate < /dev/null
+"$compose" up -d --no-build --pull never --no-deps api
 api_stopped=0
 
 healthy=0
 for ((attempt = 1; attempt <= 30; attempt++)); do
   # Read the proxy secret inside the container; never send it through Actions logs.
+  # shellcheck disable=SC2016
   if "$compose" exec -T api sh -c \
     'wget -q -O /dev/null --header="X-Retruco-Proxy-Secret: $API_PROXY_SECRET" http://127.0.0.1:8080/api/health' \
     < /dev/null > /dev/null 2>&1; then

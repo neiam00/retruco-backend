@@ -38,7 +38,9 @@ If the helper still includes `compose.voice.yaml`, complete [the Coturn migratio
 The SSH user must be able to run Docker, execute the helper, and write
 `/opt/retruco/backend` and `/opt/retruco/backups`. The workflow defaults to
 `root`. The server needs `bash`, `rsync`, `tar`, `curl`, and
-`flock` (provided by `util-linux` on Ubuntu). Keep inbound SSH available to the
+`flock` (provided by `util-linux` on Ubuntu). The CI runner and VPS Docker daemon
+must use the same Linux architecture; deployment rejects incompatible images
+before replacing source or stopping the API. Keep inbound SSH available to the
 runner separately from the Cloudflare-only HTTPS rule. The HTTPS source list
 does not grant the runner SSH access.
 
@@ -118,18 +120,31 @@ the matching `API_PROXY_SECRET`.
 ## What a deployment does
 
 1. Checks the deployment script, runs its failure-path tests, builds the Docker
-   builder stage, migrates a disposable PostgreSQL 18 service, and runs
+   builder stage, uses its compiled `/out/migrate` binary to migrate a disposable
+   PostgreSQL 18 service, and runs
    `go test -race ./...` with `DATABASE_TEST_URL` plus `go vet ./...`.
    Migration, database, HTTP/WebSocket and race tests gate production deployment.
    The tagged Cloudflare voice integration test also verifies credential welcome,
    refresh, and failure handling without calling the real provider.
-2. Archives the exact pushed commit and uploads it and the deployment script over
-   verified SSH. Runs the script from a file with stdin closed so Docker cannot
+   Checks share one container and a Go compilation cache restored across runs.
+   Tests always execute (`-count=1`); only compilation is cached. Buildx restores
+   Docker layers from the GitHub Actions cache and exports all build layers after
+   packaging the runtime image, reusing the already compiled builder stage.
+2. Packages the production image in CI with the commit SHA as its tag and revision
+   label. Archives the exact pushed source commit and uploads it, the compressed
+   image, and the deployment script over verified SSH. No registry credentials
+   are needed. Runs the script from a file with stdin closed so Docker cannot
    consume the remaining deployment commands.
-3. Takes a server-side lock and synchronizes application source, removing obsolete
+3. Takes a server-side lock, loads the image, and verifies its immutable image ID,
+   revision label, and native platform against the CI result and VPS. Then
+   synchronizes application source, removing obsolete
    source files. Preserves `.env*`, `.git`, `.agents`, `.agent`, `compose.vps.yaml`,
    `deploy/nginx.vps.conf.template`, `.deployed-revision`, `bin`, and `coverage.out`.
-4. Builds the API and migration images while the old API keeps running.
+4. Tags the verified image as `retruco-backend:production` for both the API and
+   migration services while the old API keeps running. Production Compose uses
+   that local image with pulling disabled and the inherited build configuration
+   removed via `!reset`. Deployment never compiles on the VPS; migration and API
+   startup explicitly disable pulling, and API startup also uses `--no-build`.
 5. Announces the update to all open games and pauses play for 10 seconds. The
    notice says the match is saved and reconnection will happen automatically.
    Turn and vacant-room timers are paused as well.
@@ -187,7 +202,10 @@ rejects overlapping calls to the deployment script.
 
 ## Failures and recovery
 
-- Build failure: the old API continues running; correct the source and push again.
+- Build/test failure in CI: the old API continues running; correct the source and
+  push again.
+- Image load/verification failure: the old API and installed source remain
+  untouched. Check the transfer, image ID, revision, and runner/VPS architecture.
 - Backup failure: the script restarts the existing API container without changing
   the schema.
 - Migration failure: the workflow fails and leaves the API stopped. Review the
@@ -213,6 +231,10 @@ replace a browser check of login, gameplay, and WebSockets.
 
 For a manually customized installation, `deploy/deploy-vps.sh` accepts environment
 overrides `RETRUCO_DEPLOY_DIR`, `RETRUCO_COMPOSE`, and `RETRUCO_HEALTH_URL`.
+Its arguments are `SOURCE_ARCHIVE COMMIT_SHA IMAGE_ARCHIVE IMAGE_ID`; the image
+ID is the `sha256:...` value from `docker image inspect --format '{{.Id}}'` in CI.
+The helper must include `compose.production.yaml` so both application services
+use `retruco-backend:production`; operator overrides must preserve that image.
 The workflow uses the standard server paths and derives the public health URL
 from the running installation. Customize the remote invocation if your paths
 or health URL differ.

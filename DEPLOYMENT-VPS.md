@@ -15,7 +15,12 @@ configuration to your own domain and hosting environment before deployment.
    HTTPS. Production Compose requires `ALLOWED_ORIGINS` from the environment
    file; use comma-separated exact origins with no paths or trailing slashes.
    Consult the NGINX templates when adapting the configuration.
-3. Start PostgreSQL, apply the migrations, and start the API and proxy. Keep
+3. Load the CI-built image and tag it `retruco-backend:production` (or, for a
+   manual first installation, run `docker build -t retruco-backend:production .`).
+   Production Compose removes the development build configuration and only uses
+   this local image, with registry pulls disabled. Use a current Docker Compose
+   release supporting `!reset` overrides.
+   Start PostgreSQL, apply the migrations, and start the API and proxy. Keep
    database volumes and maintain backups outside the server.
 4. Configure the frontend's `BACKEND_ORIGIN` and `API_PROXY_SECRET`, using the
    same secret as the backend. Verify the public `/api/health` endpoint, login,

@@ -1,5 +1,12 @@
 services:
+  migrate:
+    build: !reset null
+    image: retruco-backend:production
+    pull_policy: never
   api:
+    build: !reset null
+    image: retruco-backend:production
+    pull_policy: never
     environment:
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:?Set the frontend origin(s) in .env.production}
       COOKIE_SECURE: "true"
