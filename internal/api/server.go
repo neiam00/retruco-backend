@@ -59,7 +59,7 @@ type Server struct {
 	host            *game.Host
 	log             *slog.Logger
 	ctx             context.Context
-	dummyHash       []byte
+	dummyHash       string
 	limitsMu        sync.Mutex
 	limits          map[string]window
 	limitOrder      []string
@@ -79,6 +79,13 @@ type window struct {
 	count int
 }
 
+// Unknown-user logins still pay the full password comparison cost. The
+// placeholder is immutable and can be shared by every server in this process.
+var loginTimingHash = sync.OnceValues(func() (string, error) {
+	hash, err := bcrypt.GenerateFromPassword([]byte("unused-login-timing-placeholder"), 12)
+	return string(hash), err
+})
+
 func New(ctx context.Context, config Config, repository Repository, host *game.Host, log *slog.Logger) (*Server, error) {
 	if config.PasswordWorkDutyPercent == 0 {
 		config.PasswordWorkDutyPercent = 20
@@ -90,7 +97,7 @@ func New(ctx context.Context, config Config, repository Repository, host *game.H
 	if err != nil {
 		return nil, err
 	}
-	hash, err := bcrypt.GenerateFromPassword([]byte("unused-login-timing-placeholder"), 12)
+	hash, err := loginTimingHash()
 	if err != nil {
 		return nil, err
 	}
@@ -435,7 +442,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		hash = string(s.dummyHash)
+		hash = s.dummyHash
 	}
 	started := time.Now()
 	compareErr := bcrypt.CompareHashAndPassword([]byte(hash), []byte(input.Password))

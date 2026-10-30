@@ -140,10 +140,14 @@ func (c *streamConnection) until(t *testing.T, ctx context.Context, accept func(
 }
 
 func newStreamServer(t *testing.T) (context.Context, *httptest.Server, string, []store.User) {
-	return newStreamServerWithTimeout(t, 15*time.Second)
+	t.Helper()
+	ctx, handler, code, users := newStreamHandler(t, 15*time.Second)
+	httpServer := httptest.NewServer(handler)
+	t.Cleanup(httpServer.Close)
+	return ctx, httpServer, code, users
 }
 
-func newStreamServerWithTimeout(t *testing.T, timeout time.Duration) (context.Context, *httptest.Server, string, []store.User) {
+func newStreamHandler(t *testing.T, timeout time.Duration) (context.Context, http.Handler, string, []store.User) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), timeout)
 	t.Cleanup(cancel)
@@ -160,9 +164,7 @@ func newStreamServerWithTimeout(t *testing.T, timeout time.Duration) (context.Co
 	require.NoError(t, host.Join(ctx, code, users[1], nil))
 	server, err := api.New(ctx, api.Config{Origins: []string{"https://retruco.test"}}, repository, host, log)
 	require.NoError(t, err)
-	httpServer := httptest.NewServer(server.Handler())
-	t.Cleanup(httpServer.Close)
-	return ctx, httpServer, code, users
+	return ctx, server.Handler(), code, users
 }
 
 func dialStream(t *testing.T, ctx context.Context, server *httptest.Server, code, user string, v2 bool) *streamConnection {
@@ -175,7 +177,7 @@ func dialStream(t *testing.T, ctx context.Context, server *httptest.Server, code
 	if v2 {
 		url += "?transport=2"
 	}
-	conn, _, err := websocket.Dial(ctx, url, &websocket.DialOptions{HTTPHeader: header})
+	conn, _, err := websocket.Dial(ctx, url, &websocket.DialOptions{HTTPHeader: header, HTTPClient: server.Client()})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = conn.CloseNow() })
 	return &streamConnection{conn: conn}

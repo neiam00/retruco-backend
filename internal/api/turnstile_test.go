@@ -65,6 +65,8 @@ func TestRegistrationRequiresVerifiedTurnstile(t *testing.T) {
 		{name: "network error", token: "token", wantStatus: 503, wantCalls: 1},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
+			// Each scenario owns its server, repository, and verification client.
+			t.Parallel()
 			calls := 0
 			config := api.TurnstileConfig{SiteKey: "public-test-key", SecretKey: "private-test-secret", Development: scenario.development}
 			if scenario.dummyKeys {
