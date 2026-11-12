@@ -196,26 +196,13 @@ func TestHolderCannotOpenSinLey(t *testing.T) {
 }
 
 func TestSinLeyDoesNotInvalidateReceta(t *testing.T) {
-	for _, action := range []string{"call", "respond"} {
-		t.Run(action, func(t *testing.T) {
-			hands := [][3]rules.Card{
-				{{rules.Clubs, 1}, {rules.Clubs, 5}, {rules.Cups, 4}},
-				{{rules.Spades, 11}, {rules.Spades, 10}, {rules.Coins, 7}},
-			}
-			seat := 1
-			if action == "call" {
-				seat = 0
-				hands[0], hands[1] = hands[1], hands[0]
-			}
-			s := fixture(t, true, hands...)
-			s = apply(t, s, 1, rules.Command{Type: "play", Card: 0, Declaration: "a_ley"})
-			command := rules.Command{Type: "call", Kind: "ley_envido", Mode: "sin_ley"}
-			if action == "respond" {
-				s = apply(t, s, 0, rules.Command{Type: "call", Kind: "ley_envido"})
-				command.Type, command.Kind = "respond", "decline"
-			}
-			s = apply(t, s, seat, command)
-			assert.True(t, s.Players[seat].FlorValid)
-		})
-	}
+	receta := [3]rules.Card{{rules.Spades, 11}, {rules.Spades, 10}, {rules.Coins, 7}}
+	ordinary := [3]rules.Card{{rules.Clubs, 1}, {rules.Clubs, 5}, {rules.Cups, 4}}
+	s := fixture(t, true, receta, ordinary)
+	pending := apply(t, s, 1, rules.Command{Type: "call", Kind: "ley_envido"})
+	declined := apply(t, pending, 0, rules.Command{Type: "respond", Kind: "decline", Mode: "sin_ley"})
+	assert.True(t, declined.Players[0].FlorValid)
+	s = apply(t, s, 1, rules.Command{Type: "play", Card: 0, Declaration: "a_ley"})
+	s = apply(t, s, 0, rules.Command{Type: "call", Kind: "ley_envido", Mode: "sin_ley"})
+	assert.True(t, s.Players[0].FlorValid)
 }

@@ -84,8 +84,7 @@ func TestLeyEnvidoAfterFlorRequiresAnExplicitResponseAndResumesTruco(t *testing.
 	assert.True(t, finished.EnvidoAccepted)
 	require.NotNil(t, finished.Pending)
 	assert.Equal(t, "truco", finished.Pending.Kind)
-	alias := apply(t, s, 1, rules.Command{Type: "call", Kind: "flor"})
-	assert.Equal(t, finished, alias)
+	assertRejectedCanto(t, s, 1, rules.Command{Type: "call", Kind: "flor"}) // Only the responder had announced flor.
 }
 
 func TestALeyDoesNotDeclareFlorOrPreventEnvido(t *testing.T) {
@@ -99,14 +98,16 @@ func TestALeyDoesNotDeclareFlorOrPreventEnvido(t *testing.T) {
 			assert.False(t, s.Players[1].FlorDeclared, "A ley only says the player might hold flor")
 			assert.True(t, s.Players[1].FlorValid)
 			assertRejectedCanto(t, s, 0, rules.Command{Type: "call", Kind: "envido"})
-			for _, command := range []rules.Command{
-				{Type: "call", Kind: "ley_envido"},
-				{Type: "call", Kind: "flor"},
-			} {
-				require.Contains(t, rules.LegalActions(s, 0), command)
-				next := apply(t, s, 0, command)
-				assert.Equal(t, command.Kind, next.Pending.Kind)
-			}
+			assertRejectedCanto(t, s, 0, rules.Command{Type: "call", Kind: "flor"})
+			assertRejectedCanto(t, s, 0, rules.Command{Type: "call", Kind: "ley_envido"})
+			command := rules.Command{Type: "call", Kind: "ley_envido", Mode: "con_ley"}
+			require.Contains(t, rules.LegalActions(s, 0), command)
+			next, events, err := rules.Apply(s, 0, command)
+			require.NoError(t, err)
+			assert.True(t, next.Pending.FlorOffered)
+			assert.Empty(t, next.Pending.Mode)
+			assert.Equal(t, "con_ley", events[0].Mode)
+			assert.Equal(t, "ley_envido", events[0].Kind)
 		})
 	}
 }
@@ -118,6 +119,15 @@ func TestDeclaredFlorStillAllowsEligibleFlorContest(t *testing.T) {
 	require.Contains(t, rules.LegalActions(s, 0), command)
 	s = apply(t, s, 0, command)
 	assert.Equal(t, "flor", s.Pending.Kind)
+}
+
+func TestOnlyAnotherPlayersPublicFlorEnablesFlorTengoReply(t *testing.T) {
+	s := fixture(t, true, [3]rules.Card{{rules.Cups, 4}, {rules.Cups, 6}, {rules.Cups, 7}}, [3]rules.Card{{rules.Coins, 3}, {rules.Coins, 5}, {rules.Coins, 7}})
+	s = apply(t, s, 1, rules.Command{Type: "call", Kind: "truco", Declaration: "con_mi_flor"})
+	s = apply(t, s, 0, rules.Command{Type: "respond", Kind: "accept", Declaration: "con_mi_flor"})
+	s = apply(t, s, 1, rules.Command{Type: "call", Kind: "ley_envido"})
+	qualified := apply(t, s, 0, rules.Command{Type: "respond", Kind: "accept", Mode: "con_ley"})
+	assert.Equal(t, qualified, apply(t, s, 0, rules.Command{Type: "call", Kind: "flor"}))
 }
 
 func TestDeclaredFlorDoesNotAllowFlorContestWithoutValidOrdinaryFlor(t *testing.T) {
@@ -208,12 +218,13 @@ func TestFlorLeyPayoutsAtTheTable(t *testing.T) {
 	}
 }
 
-func TestBareLeyFlorChallengeDoesNotRevealWhetherOpponentHasFlor(t *testing.T) {
+func TestBareLeyRequiresConLeyEnvidoAndOnlyAllowsSinLeyRefusalWithoutFlor(t *testing.T) {
 	holder := [3]rules.Card{{rules.Coins, 7}, {rules.Coins, 6}, {rules.Coins, 5}}
 	noFlor := [3]rules.Card{{rules.Clubs, 7}, {rules.Clubs, 6}, {rules.Cups, 5}}
 	s := fixture(t, true, holder, noFlor)
 	s = apply(t, s, 1, rules.Command{Type: "play", Card: 0, Declaration: "a_ley"})
-	challenge := rules.Command{Type: "call", Kind: "flor"}
+	assertRejectedCanto(t, s, 0, rules.Command{Type: "call", Kind: "flor"})
+	challenge := rules.Command{Type: "call", Kind: "ley_envido", Mode: "con_ley"}
 	require.Contains(t, rules.LegalActions(s, 0), challenge)
 	pending := apply(t, s, 0, challenge)
 	assert.Equal(t, []rules.Command{{Type: "respond", Kind: "decline", Mode: "sin_ley"}}, rules.LegalActions(pending, 1))

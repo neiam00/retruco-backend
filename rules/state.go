@@ -39,12 +39,13 @@ type Player struct {
 }
 
 type Wager struct {
-	Kind     string `json:"kind"`
-	Caller   int    `json:"caller"`
-	Value    int    `json:"value"`
-	Previous int    `json:"previous"`
-	Terminal bool   `json:"terminal"`
-	Mode     string `json:"mode,omitempty"`
+	Kind        string `json:"kind"`
+	Caller      int    `json:"caller"`
+	Value       int    `json:"value"`
+	Previous    int    `json:"previous"`
+	Terminal    bool   `json:"terminal"`
+	Mode        string `json:"mode,omitempty"`
+	FlorOffered bool   `json:"florOffered,omitempty"`
 }
 
 // State contains secrets and must never be serialized to a client. View is the
@@ -77,7 +78,6 @@ type State struct {
 	EnvidoCanceled bool
 	EnvidoWinner   int
 	Ley            bool
-	BareLey        bool // The preceding card was played with A ley; consumed by the next action.
 	DoubleFlor     [2]bool
 	FlorClaimant   [2]int
 	MandatoryStack bool
@@ -221,7 +221,7 @@ func applyCommand(s State, seat int, command Command, automatic bool) (State, []
 		return s, nil, fmt.Errorf("invalid player or finished match")
 	}
 	// The spoken flor reply to an explicit wager is the same decision as Con ley, quiero.
-	if s.Pending != nil && s.Pending.Kind == "ley_envido" && s.Pending.Mode == "" &&
+	if s.Pending != nil && s.Pending.Kind == "ley_envido" && s.Pending.Mode == "" && s.otherDeclaredFlor(seat) &&
 		command.Type == "call" && command.Kind == "flor" && command.Declaration == "" && command.Mode == "" && command.Amount == 0 {
 		command = Command{Type: "respond", Kind: "accept", Mode: "con_ley"}
 	}
@@ -261,9 +261,6 @@ func applyCommand(s State, seat int, command Command, automatic bool) (State, []
 	}
 	if err != nil {
 		return s, nil, err
-	}
-	if command.Type != "play" {
-		next.BareLey = false
 	}
 	next.Revision++
 	events := []Event{publicEvent(seat, command, s.Pending)}

@@ -190,8 +190,8 @@ func LegalActions(s State, seat int) []Command {
 			for _, kind := range []string{"envido", "ley_envido", "flor"} {
 				add(Command{Type: "call", Kind: kind, Declaration: declaration})
 			}
-			if declaration == "" && s.BareLey && !s.otherDeclaredFlor(-1) && !s.ordinaryFlor(seat) {
-				add(Command{Type: "call", Kind: "ley_envido", Mode: "sin_ley"})
+			if declaration == "" && s.Ley && !s.otherDeclaredFlor(-1) {
+				add(Command{Type: "call", Kind: "ley_envido", Mode: s.leyReplyMode(seat)})
 			}
 			for _, amount := range []int{3, 6, 9, 100} {
 				if amount > s.TrucoValue && (s.TrucoValue != 1 || amount == 3) {

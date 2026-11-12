@@ -6,13 +6,6 @@ func (m *Match) restoreFlorDeclarations() {
 	if m.State == nil {
 		return
 	}
-	// Older snapshots have no BareLey field. Only the most recent action can
-	// establish the narrow reply window; canto history alone omits silent plays.
-	if len(m.Events) > 0 {
-		last := m.Events[len(m.Events)-1]
-		m.State.BareLey = last.Hand == m.State.HandNumber && last.Event.Type == "play" &&
-			last.Event.Text == "a_ley" && m.State.Round == 0 && m.State.Pending == nil
-	}
 	var aLey, confirmed [4]bool
 	publicFlor, invalidOrdinaryOpening := false, false
 	for _, record := range m.CantoHistory {
@@ -28,7 +21,7 @@ func (m *Match) restoreFlorDeclarations() {
 		}
 		// Public declaration text contains only A ley or recognized flor wording.
 		if event.Text != "" && event.Text != "a_ley" ||
-			event.Type == "call" && event.Kind == "flor" ||
+			event.Type == "call" && (event.Kind == "flor" || event.Mode == "con_ley") ||
 			event.Type == "respond" && (event.Kind == "flowers_no" || event.Kind == "present_flor" || event.Mode == "con_ley") {
 			confirmed[event.Seat] = true
 			publicFlor = true

@@ -71,7 +71,9 @@ func referenceLegalActions(s State, seat int) []Command {
 			for _, kind := range []string{"envido", "ley_envido", "flor"} {
 				add(Command{Type: "call", Kind: kind, Declaration: declaration})
 			}
-			add(Command{Type: "call", Kind: "ley_envido", Mode: "sin_ley", Declaration: declaration})
+			for _, mode := range []string{"con_ley", "sin_ley"} {
+				add(Command{Type: "call", Kind: "ley_envido", Mode: mode, Declaration: declaration})
+			}
 			for _, amount := range []int{3, 6, 9, 100} {
 				add(Command{Type: "call", Kind: "truco", Amount: amount, Declaration: declaration})
 			}

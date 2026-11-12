@@ -28,7 +28,6 @@ func (s *State) play(seat int, command Command, timeout bool) error {
 	if stack && (s.Round != 1 || command.Top < 0 || command.Top >= 3 || command.Top == command.Card || p.Used[command.Top]) {
 		return fmt.Errorf("invalid pegado")
 	}
-	s.BareLey = !timeout && s.Round == 0 && command.Declaration == "a_ley"
 	if !timeout || s.Round == 0 {
 		s.declareCards(seat, command.Declaration)
 	}

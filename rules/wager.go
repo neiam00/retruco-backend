@@ -41,24 +41,38 @@ func (s *State) call(seat int, c Command) error {
 	if c.Declaration != "" || c.Amount != 0 {
 		return fmt.Errorf("invalid envido opening")
 	}
-	// With no public flor, the next player can still open Sin ley after a bare A ley.
-	if c.Mode != "" && !(c.Mode == "sin_ley" && (c.Kind == "envido" || c.Kind == "ley_envido") &&
-		s.BareLey && !s.otherDeclaredFlor(-1) && !s.ordinaryFlor(seat)) {
-		return fmt.Errorf("invalid envido opening")
-	}
-	wager := Wager{Kind: c.Kind, Caller: team, Value: 2, Previous: 1, Mode: c.Mode}
+	declared := s.otherDeclaredFlor(-1)
+	holdingFlor := s.ordinaryFlor(seat)
+	wager := Wager{Kind: c.Kind, Caller: team, Value: 2, Previous: 1}
 	switch c.Kind {
 	case "envido":
-		if s.ordinaryFlor(seat) || s.otherDeclaredFlor(-1) {
+		if holdingFlor || declared {
 			return fmt.Errorf("ordinary envido cannot be called with or after a flor")
 		}
+		if c.Mode != "" && !(c.Mode == "sin_ley" && s.Ley) {
+			return fmt.Errorf("invalid ordinary envido mode")
+		}
+		wager.Mode = c.Mode
 	case "ley_envido":
+		if s.Ley && !declared {
+			if c.Mode != s.leyReplyMode(seat) {
+				return fmt.Errorf("qualify the envido after A ley according to your holding")
+			}
+			if holdingFlor {
+				// The opening states the caller's flor; the rival must still answer.
+				wager.FlorOffered = true
+				s.Players[seat].FlorDeclared = true
+			} else {
+				wager.Mode = c.Mode
+			}
+		} else if c.Mode != "" {
+			return fmt.Errorf("a qualified opening requires a prior A ley without a confirmed flor")
+		}
 		s.Ley = true
 		s.DoubleFlor[team] = true
 	case "flor":
-		previousLey := s.BareLey && seat == s.Turn && s.Players[s.left(seat)].FirstPlayed
-		if !s.ordinaryFlor(seat) || (!previousLey && !s.otherDeclaredFlor(seat)) {
-			return fmt.Errorf("flor tengo y la mia envida requires your flor and another player's flor or preceding A ley")
+		if c.Mode != "" || !holdingFlor || !s.otherDeclaredFlor(seat) {
+			return fmt.Errorf("flor tengo y la mia envida requires your flor and another player's declared flor")
 		}
 		s.Players[seat].FlorDeclared = true
 	default:
@@ -90,7 +104,7 @@ func (s *State) respond(seat int, c Command, automatic bool) error {
 		if !automatic && c.Mode != mode {
 			return fmt.Errorf("ley reply must match the speaker's holding")
 		}
-		if wager.Kind == "flor" && mode == "sin_ley" && c.Kind != "decline" {
+		if (wager.Kind == "flor" || wager.FlorOffered) && mode == "sin_ley" && c.Kind != "decline" {
 			return fmt.Errorf("answer a flor envidada without flor with Sin ley, no quiero")
 		}
 		wager.Mode = mode
@@ -128,7 +142,7 @@ func (s *State) respond(seat int, c Command, automatic bool) error {
 			s.Pending = nil
 			s.settle(wager.Caller, "truco_declined")
 		} else {
-			if automatic && wager.Kind == "flor" {
+			if automatic && (wager.Kind == "flor" || wager.FlorOffered) {
 				s.burnTeamFlor(team)
 			} else if ley && wager.Mode == "con_ley" {
 				s.burnFlor(seat)
