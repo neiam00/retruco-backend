@@ -119,11 +119,8 @@ func (s *State) respond(seat int, c Command, automatic bool) error {
 	if !ley && !automatic {
 		s.declareCanto(seat, c.Declaration)
 	}
-	if ley && wager.Mode == "con_ley" && c.Kind != "decline" && s.teamHasFlor(0, false) && s.teamHasFlor(1, false) {
-		// Once opposing flores are envidadas, omissions on later cards or cantos cannot burn them.
-		for i := 0; i < s.Config.Players; i++ {
-			s.Players[i].FlorEnvidada = s.Players[i].FlorValid
-		}
+	if ley && wager.Mode == "con_ley" && c.Kind != "decline" {
+		s.protectContestedFlores()
 	}
 	if c.Kind == "decline" {
 		if wager.Kind == "truco" {
@@ -190,6 +187,22 @@ func (s *State) respond(seat int, c Command, automatic bool) error {
 func trucoLevel(value int) bool { return value == 3 || value == 6 || value == 9 || value == 100 }
 
 func (s *State) resumeTruco() { s.Pending, s.Suspended = s.Suspended, nil }
+
+// Opposing envidada flores survive later omissions on cards and cantos.
+func (s *State) protectContestedFlores() bool {
+	if !s.teamHasFlor(0, false) || !s.teamHasFlor(1, false) {
+		return false
+	}
+	changed := false
+	for seat := 0; seat < s.Config.Players; seat++ {
+		player := &s.Players[seat]
+		if player.FlorValid && !player.FlorEnvidada {
+			player.FlorEnvidada = true
+			changed = true
+		}
+	}
+	return changed
+}
 
 func (s *State) burnFlor(seat int) {
 	if !s.Players[seat].Holding.Receta {

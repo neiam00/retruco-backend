@@ -238,3 +238,39 @@ func TestLeyReplyUsesTheSpeakersOwnFlor(t *testing.T) {
 	assert.False(t, s.EnvidoResults[1].Eligible, "a bluffer's ordinary pair cannot win a con-ley comparison")
 	assert.Contains(t, s.Payouts, rules.Payout{Kind: "envido", Team: 0, Points: 2})
 }
+
+func TestRestoringOldHandCorrectsOnlyUnfinishedDecisions(t *testing.T) {
+	s := fixture(t, true,
+		[3]rules.Card{{rules.Clubs, 3}, {rules.Clubs, 6}, {rules.Clubs, 5}},
+		[3]rules.Card{{rules.Cups, 5}, {rules.Cups, 6}, {rules.Cups, 7}},
+		[3]rules.Card{{rules.Coins, 3}, {rules.Coins, 6}, {rules.Coins, 5}},
+		[3]rules.Card{{rules.Spades, 6}, {rules.Spades, 7}, {rules.Spades, 5}},
+	)
+	for range 4 {
+		s = apply(t, s, s.Turn, rules.Command{Type: "play", Card: 0, Declaration: "a_ley"})
+	}
+	require.Equal(t, 2, s.Turn)
+	s.Turn = s.Mano
+	s.MandatoryStack = true
+	s.Pending = &rules.Wager{Kind: "envido", Caller: 1, Value: 2, Previous: 1}
+	s.Suspended = &rules.Wager{Kind: "truco", Caller: 0, Value: 3, Previous: 1}
+	revision := s.Revision
+	s.RestoreActiveHand(true)
+	assert.False(t, s.MandatoryStack)
+	assert.Equal(t, 2, s.Turn)
+	require.NotNil(t, s.Pending)
+	assert.Equal(t, "truco", s.Pending.Kind)
+	assert.Nil(t, s.Suspended)
+	assert.Equal(t, revision+1, s.Revision)
+	s.RestoreActiveHand(true)
+	assert.Equal(t, revision+1, s.Revision)
+	s.Pending = nil
+	s.Envido = rules.Wager{Kind: "ley_envido", Mode: "con_ley", Value: 2}
+	s.EnvidoAccepted = true
+	s.RestoreActiveHand(false)
+	for seat := range 4 {
+		assert.True(t, s.Players[seat].FlorEnvidada)
+	}
+	s = apply(t, s, 2, rules.Command{Type: "play", Card: 1})
+	assert.True(t, s.Players[2].FlorValid)
+}

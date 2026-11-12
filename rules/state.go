@@ -174,6 +174,40 @@ func StartHand(s State, deck []Card) (State, error) {
 	return next, nil
 }
 
+// RestoreActiveHand reconciles decisions still pending in an older saved hand.
+// Settled hands and cards already played keep their recorded outcomes.
+func (s *State) RestoreActiveHand(invalidOrdinaryOpening bool) {
+	if s.Phase != Playing {
+		return
+	}
+	changed := false
+	if invalidOrdinaryOpening && s.Pending != nil && s.Pending.Kind == "envido" {
+		s.resumeTruco()
+		changed = true
+	}
+	if s.Round == 1 && s.MandatoryStack {
+		if winner := s.roundWinner(0); winner >= 0 {
+			s.MandatoryStack = false
+			for offset := 0; offset < s.Config.Players; offset++ {
+				seat := (winner + offset) % s.Config.Players
+				if !s.Players[seat].Plays[1].Present {
+					s.Turn = seat
+					break
+				}
+			}
+			changed = true
+		}
+	}
+	contest := s.EnvidoAccepted && (s.Envido.Kind == "flor" || s.Envido.Mode == "con_ley") ||
+		s.Pending != nil && (s.Pending.Mode == "con_ley" || s.Pending.Kind == "flor" && s.Pending.Previous >= 2)
+	if contest && s.protectContestedFlores() {
+		changed = true
+	}
+	if changed {
+		s.Revision++
+	}
+}
+
 // Apply validates a command against a value copy. Rejected commands leave the
 // input state unchanged, including its revision and active response window.
 func Apply(s State, seat int, command Command) (State, []Event, error) {
