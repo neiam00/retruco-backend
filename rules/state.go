@@ -32,6 +32,7 @@ type Player struct {
 	Holding      Holding
 	FlorValid    bool
 	FlorDeclared bool
+	FlorEnvidada bool
 	FirstPlayed  bool
 	Stacked      bool
 	Plays        [3]Play
@@ -76,6 +77,7 @@ type State struct {
 	EnvidoCanceled bool
 	EnvidoWinner   int
 	Ley            bool
+	BareLey        bool // The preceding card was played with A ley; consumed by the next action.
 	DoubleFlor     [2]bool
 	FlorClaimant   [2]int
 	MandatoryStack bool
@@ -175,11 +177,22 @@ func StartHand(s State, deck []Card) (State, error) {
 // Apply validates a command against a value copy. Rejected commands leave the
 // input state unchanged, including its revision and active response window.
 func Apply(s State, seat int, command Command) (State, []Event, error) {
+	return applyCommand(s, seat, command, false)
+}
+
+// automatic is internal to the response clock: it never manufactures spoken
+// declarations, and cannot be requested through a client/model command.
+func applyCommand(s State, seat int, command Command, automatic bool) (State, []Event, error) {
 	if seat < 0 || seat >= s.Config.Players || s.Phase == MatchOver {
 		return s, nil, fmt.Errorf("invalid player or finished match")
 	}
-	if command.Declaration == "a_ley" && s.Round > 0 {
-		return s, nil, fmt.Errorf("a ley is only available in the first round")
+	// The spoken flor reply to an explicit wager is the same decision as Con ley, quiero.
+	if s.Pending != nil && s.Pending.Kind == "ley_envido" && s.Pending.Mode == "" &&
+		command.Type == "call" && command.Kind == "flor" && command.Declaration == "" && command.Mode == "" && command.Amount == 0 {
+		command = Command{Type: "respond", Kind: "accept", Mode: "con_ley"}
+	}
+	if err := s.validateDeclaration(seat, command); err != nil {
+		return s, nil, err
 	}
 	next := s
 	if s.Pending != nil {
@@ -208,12 +221,15 @@ func Apply(s State, seat int, command Command) (State, []Event, error) {
 	case "call":
 		err = next.call(seat, command)
 	case "respond":
-		err = next.respond(seat, command)
+		err = next.respond(seat, command, automatic)
 	default:
 		err = fmt.Errorf("unknown command")
 	}
 	if err != nil {
 		return s, nil, err
+	}
+	if command.Type != "play" {
+		next.BareLey = false
 	}
 	next.Revision++
 	events := []Event{publicEvent(seat, command, s.Pending)}
@@ -230,6 +246,57 @@ func Apply(s State, seat int, command Command) (State, []Event, error) {
 		}
 	}
 	return next, events, nil
+}
+
+// A declaration asserts an eligible holding; it is not an unrestricted label.
+// Apply owns this check so clients, CPUs, and training LegalActions share it.
+func (s State) validateDeclaration(seat int, command Command) error {
+	if command.Declaration == "" {
+		return nil // Omitting a required declaration still carries its normal penalty.
+	}
+	if command.Declaration == "a_ley" {
+		if command.Type != "play" || s.Round != 0 || s.Players[seat].FirstPlayed {
+			return fmt.Errorf("a ley is only a first-card declaration")
+		}
+		return nil // A ley means the player may or may not hold flor.
+	}
+	if !declaresFlor(command.Declaration) {
+		return fmt.Errorf("unknown declaration")
+	}
+	switch command.Type {
+	case "play", "stack", "burn", "call", "respond":
+	default:
+		return fmt.Errorf("this action cannot declare flor")
+	}
+	player := s.Players[seat]
+	if !player.FlorValid || player.Holding.Flor == 0 || player.Holding.Receta {
+		return fmt.Errorf("flor declaration requires a valid ordinary flor")
+	}
+	expected := ""
+	switch command.Type {
+	case "play", "burn":
+		expected = "flor"
+		if command.Type == "burn" && s.MandatoryStack {
+			expected = "flor_flor"
+		} else if len(s.Remaining(seat)) == 1 {
+			expected = "presento_flor"
+		}
+	case "stack":
+		expected = "flor_flor"
+	case "call":
+		if command.Kind == "truco" {
+			expected = "con_mi_flor"
+		}
+	case "respond":
+		if (command.Kind == "accept" || command.Kind == "decline" || command.Kind == "raise" || command.Kind == "falta") &&
+			s.Pending != nil && (s.Pending.Kind == "truco" || s.Pending.Kind == "envido") {
+			expected = "con_mi_flor"
+		}
+	}
+	if command.Declaration != expected {
+		return fmt.Errorf("flor declaration does not match this action")
+	}
+	return nil
 }
 
 // Public events describe declarations and negotiations. They never contain a
@@ -266,11 +333,7 @@ func Timeout(s State, choice int) (State, []Event, error) {
 		seat := (s.Pending.Caller + 1) % 2
 		// A team timeout has no individual speaker; ordinary flores survive.
 		// Flor-contest refusal still invalidates the team's ordinary flores.
-		declaration := "con_mi_flor"
-		if s.Pending.Kind == "privo" {
-			declaration = ""
-		}
-		next, events, err := Apply(s, seat, Command{Type: "respond", Kind: "decline", Declaration: declaration})
+		next, events, err := applyCommand(s, seat, Command{Type: "respond", Kind: "decline"}, true)
 		if len(events) > 0 {
 			events[0].Automatic = true
 			events[0].Text = ""

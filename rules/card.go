@@ -50,7 +50,7 @@ func Pieces(vira Card) (perico, perica Card) {
 	return perico, perica
 }
 
-// Strength increases with rank. Equal strengths are a tie, even for teammates.
+// Strength increases with rank. The trick rules resolve equal strengths.
 // The spec ranks the seven of clubs above the seven of cups.
 func Strength(card, vira Card) int {
 	perico, perica := Pieces(vira)

@@ -172,13 +172,26 @@ func LegalActions(s State, seat int) []Command {
 			}
 		}
 	}
-	for _, declaration := range []string{"", "flor", "presento_flor", "flor_flor", "con_mi_flor"} {
+	replyModes := []string{""}
+	if responding {
+		switch s.Pending.Kind {
+		case "flor", "ley_envido":
+			if s.Pending.Mode == "" {
+				replyModes = []string{s.leyReplyMode(seat)}
+			}
+		case "envido":
+			if s.Ley && !s.ordinaryFlor(seat) {
+				replyModes = append(replyModes, "sin_ley")
+			}
+		}
+	}
+	for _, declaration := range []string{"", "con_mi_flor", "con_flor"} {
 		if canCall {
 			for _, kind := range []string{"envido", "ley_envido", "flor"} {
 				add(Command{Type: "call", Kind: kind, Declaration: declaration})
 			}
-			for _, mode := range []string{"con_ley", "sin_ley"} {
-				add(Command{Type: "call", Kind: "ley_envido", Mode: mode, Declaration: declaration})
+			if declaration == "" && s.BareLey && !s.otherDeclaredFlor(-1) && !s.ordinaryFlor(seat) {
+				add(Command{Type: "call", Kind: "ley_envido", Mode: "sin_ley"})
 			}
 			for _, amount := range []int{3, 6, 9, 100} {
 				if amount > s.TrucoValue && (s.TrucoValue != 1 || amount == 3) {
@@ -189,14 +202,8 @@ func LegalActions(s State, seat int) []Command {
 		if !responding {
 			continue
 		}
-		for _, mode := range []string{"", "con_ley", "sin_ley"} {
-			if mode != "" && (s.Pending.Kind != "ley_envido" || s.Pending.Mode != "") {
-				continue
-			}
+		for _, mode := range replyModes {
 			for _, kind := range []string{"accept", "decline", "flowers_no", "falta"} {
-				if kind == "decline" && mode != "" {
-					continue
-				}
 				if kind == "flowers_no" && (s.Pending.Kind != "envido" || !s.Players[seat].FlorValid || s.Players[seat].Holding.Receta) {
 					continue
 				}
@@ -221,9 +228,6 @@ func LegalActions(s State, seat int) []Command {
 					}
 				}
 			}
-		}
-		if (s.Pending.Kind == "envido" || s.Pending.Kind == "ley_envido") && (s.Ley || s.Pending.Kind == "ley_envido") {
-			add(Command{Type: "respond", Kind: "decline", Mode: "sin_ley", Declaration: declaration})
 		}
 	}
 	return legal

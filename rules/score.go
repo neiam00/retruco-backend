@@ -13,9 +13,18 @@ func (s *State) settle(handWinner int, reason string) {
 			value, eligible := s.envidoValue(seat)
 			s.EnvidoResults = append(s.EnvidoResults, EnvidoResult{Seat: seat, Value: value, Eligible: eligible})
 		}
-		envidoWinner = s.compareEnvido()
-		if s.Envido.Kind == "flor" && envidoWinner >= 0 {
-			s.burnTeamFlor(1 - envidoWinner)
+		winner := s.bestEnvidoSeat()
+		envidoWinner = -1
+		if winner >= 0 {
+			envidoWinner = s.Team(winner)
+			if s.Envido.Kind == "flor" || s.Envido.Mode == "con_ley" {
+				// Only the highest flor earns the contested three points. Receta stays protected.
+				for seat := 0; seat < s.Config.Players; seat++ {
+					if seat != winner {
+						s.burnFlor(seat)
+					}
+				}
+			}
 		}
 	}
 	flor := [2]int{}
@@ -37,7 +46,7 @@ func (s *State) settle(handWinner int, reason string) {
 		}
 	}
 	// A ley and privo settle envido before flor, stopping as soon as it wins.
-	if s.Envido.Kind == "ley_envido" || s.Envido.Kind == "privo" {
+	if s.Envido.Kind == "ley_envido" || s.Envido.Kind == "flor" || s.Envido.Kind == "privo" {
 		if s.award("envido", envido) || s.award("flor", flor) {
 			return
 		}
@@ -71,7 +80,7 @@ func (s *State) award(kind string, points [2]int) bool {
 	return false
 }
 
-func (s State) compareEnvido() int {
+func (s State) bestEnvidoSeat() int {
 	best, winner := -1, -1
 	for offset := 0; offset < s.Config.Players; offset++ {
 		seat := (s.Mano + offset) % s.Config.Players
@@ -80,7 +89,7 @@ func (s State) compareEnvido() int {
 			continue
 		}
 		if value > best {
-			best, winner = value, s.Team(seat)
+			best, winner = value, seat
 		}
 	}
 	return winner
@@ -88,10 +97,12 @@ func (s State) compareEnvido() int {
 
 func (s State) envidoValue(seat int) (int, bool) {
 	player := s.Players[seat]
-	if s.Envido.Kind == "flor" {
+	if s.Envido.Kind == "flor" || s.Envido.Mode == "con_ley" {
 		return player.Holding.Flor, player.FlorValid
 	}
-	if s.Envido.Mode == "con_ley" && player.FlorValid {
+	// With Sin ley the player without flor uses ordinary envido. A valid
+	// opposing flor still competes with all three cards.
+	if s.Envido.Kind == "ley_envido" && player.FlorValid {
 		return player.Holding.Flor, true
 	}
 	return player.Holding.Envido, true

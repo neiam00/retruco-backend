@@ -20,9 +20,9 @@ func TestAdditiveRaisesRejectOverflowWithoutChangingTheHand(t *testing.T) {
 		mode  string
 	}{
 		{name: "envido", state: apply(t, simple(t), 1, rules.Command{Type: "call", Kind: "envido"}), seat: 0},
-		{name: "flor", state: opposingFlores(t), seat: 1},
-		{name: "ley awaiting choice", state: ley, seat: 0, mode: "con_ley"},
-		{name: "chosen con ley", state: apply(t, ley, 0, rules.Command{Type: "respond", Kind: "raise", Amount: 2, Mode: "con_ley"}), seat: 1},
+		{name: "flor", state: opposingFlores(t), seat: 1, mode: "con_ley"},
+		{name: "ley awaiting choice", state: ley, seat: 0, mode: "sin_ley"},
+		{name: "chosen con ley", state: apply(t, opposingFlores(t), 1, rules.Command{Type: "respond", Kind: "raise", Amount: 2, Mode: "con_ley"}), seat: 0},
 		{name: "chosen sin ley", state: apply(t, ley, 0, rules.Command{Type: "respond", Kind: "raise", Amount: 2, Mode: "sin_ley"}), seat: 1},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
@@ -182,6 +182,10 @@ func TestExplicitLeyEnvidoCallsRequirePriorALey(t *testing.T) {
 				command := tc.command
 				command.Declaration = declaration
 				assertRejectedCanto(t, before, before.Turn, command)
+			}
+			if tc.command.Mode == "con_ley" {
+				assertRejectedCanto(t, after, after.Turn, tc.command)
+				return
 			}
 			if tc.command.Kind == "ley_envido" {
 				require.Contains(t, rules.LegalActions(after, after.Turn), tc.command)

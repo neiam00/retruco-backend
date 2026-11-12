@@ -87,14 +87,19 @@ func TestVoluntaryBurnRequiresNormalFlorDeclarations(t *testing.T) {
 			s = apply(t, s, 1, rules.Command{Type: "burn", Card: 1, Declaration: test.second})
 			s = apply(t, s, 0, rules.Command{Type: "play", Card: 1})
 			s = apply(t, s, 0, rules.Command{Type: "burn", Card: 2})
-			s = apply(t, s, 1, rules.Command{Type: "burn", Card: 2, Declaration: test.third})
+			third := rules.Command{Type: "burn", Card: 2, Declaration: test.third}
+			if !s.Players[1].FlorValid && third.Declaration != "" {
+				assertRejectedCanto(t, s, 1, third)
+				third.Declaration = ""
+			}
+			s = apply(t, s, 1, third)
 			assert.Equal(t, test.valid, s.Players[1].FlorValid)
 		})
 	}
 }
 
 func TestVoluntaryBurnDuringMandatoryPegadoBurnsBothCards(t *testing.T) {
-	for _, declaration := range []string{"", "flor", "flor_flor"} {
+	for _, declaration := range []string{"", "flor_flor"} {
 		t.Run("declaration="+declaration, func(t *testing.T) {
 			s := fixture(t, true,
 				[3]rules.Card{{rules.Clubs, 3}, {rules.Cups, 4}, {rules.Spades, 5}},

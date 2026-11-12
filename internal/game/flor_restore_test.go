@@ -21,9 +21,9 @@ func TestRestoreDistinguishesLegacyALeyFromConfirmedFlor(t *testing.T) {
 			t.Run(name, func(t *testing.T) {
 				state, err := rules.New(rules.Config{Players: 2, Target: 12}, 0, rules.Deck())
 				require.NoError(t, err)
-				state, _, err = rules.Apply(state, state.Turn, rules.Command{Type: "cut", Cut: 39})
+				state, _, err = rules.Apply(state, state.Turn, rules.Command{Type: "cut", Cut: 3})
 				require.NoError(t, err)
-				require.True(t, state.Players[0].FlorValid)
+				require.False(t, state.Players[0].FlorValid)
 				require.True(t, state.Players[1].FlorValid)
 				var history []game.GameEvent
 				play := func(seat int, command rules.Command) {
@@ -61,7 +61,7 @@ func TestRestoreDistinguishesLegacyALeyFromConfirmedFlor(t *testing.T) {
 				command := rules.Command{Type: "call", Kind: "envido"}
 				if declared {
 					assert.NotContains(t, before.State.Legal, command)
-					require.Contains(t, before.State.Legal, rules.Command{Type: "call", Kind: "flor"})
+					require.Contains(t, before.State.Legal, rules.Command{Type: "call", Kind: "ley_envido"})
 				} else {
 					require.Contains(t, before.State.Legal, command)
 					assert.NotContains(t, before.State.Legal, rules.Command{Type: "call", Kind: "flor"})

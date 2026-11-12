@@ -537,12 +537,18 @@ func TestCantoInterruptionAndResumptionEachReceiveThirtySeconds(t *testing.T) {
 		interrupted := act("interrupt", responder, rules.Command{Type: "call", Kind: "ley_envido"})
 		require.NotNil(t, interrupted.State.Suspended)
 		shortenSavedWindow()
-		resumed := act("accept-envido", caller, rules.Command{Type: "respond", Kind: "accept", Mode: "sin_ley", Declaration: "con_mi_flor"})
+		answer, err := host.Snapshot(code, players[caller].ID, caller)
+		require.NoError(t, err)
+		mode := "sin_ley"
+		if answer.State.FlorValid && !answer.State.Holding.Receta {
+			mode = "con_ley"
+		}
+		resumed := act("accept-envido", caller, rules.Command{Type: "respond", Kind: "accept", Mode: mode})
 		require.NotNil(t, resumed.State.Pending)
 		assert.Equal(t, "truco", resumed.State.Pending.Kind)
 		assert.Nil(t, resumed.State.Suspended)
 		shortenSavedWindow()
-		playing := act("accept-truco", responder, rules.Command{Type: "respond", Kind: "accept", Declaration: "con_mi_flor"})
+		playing := act("accept-truco", responder, rules.Command{Type: "respond", Kind: "accept"})
 		assert.Nil(t, playing.State.Pending)
 		assert.Equal(t, caller, playing.State.Turn)
 	})

@@ -66,14 +66,12 @@ func referenceLegalActions(s State, seat int) []Command {
 			}
 		}
 	}
-	for _, declaration := range []string{"", "flor", "presento_flor", "flor_flor", "con_mi_flor"} {
+	for _, declaration := range []string{"", "flor", "presento_flor", "flor_flor", "con_mi_flor", "con_flor"} {
 		if canCall {
 			for _, kind := range []string{"envido", "ley_envido", "flor"} {
 				add(Command{Type: "call", Kind: kind, Declaration: declaration})
 			}
-			for _, mode := range []string{"con_ley", "sin_ley"} {
-				add(Command{Type: "call", Kind: "ley_envido", Mode: mode, Declaration: declaration})
-			}
+			add(Command{Type: "call", Kind: "ley_envido", Mode: "sin_ley", Declaration: declaration})
 			for _, amount := range []int{3, 6, 9, 100} {
 				add(Command{Type: "call", Kind: "truco", Amount: amount, Declaration: declaration})
 			}
@@ -82,13 +80,7 @@ func referenceLegalActions(s State, seat int) []Command {
 			continue
 		}
 		for _, mode := range []string{"", "con_ley", "sin_ley"} {
-			if mode != "" && (s.Pending.Kind != "ley_envido" || s.Pending.Mode != "") {
-				continue
-			}
 			for _, kind := range []string{"accept", "decline", "flowers_no", "falta"} {
-				if kind == "decline" && mode != "" {
-					continue
-				}
 				add(Command{Type: "respond", Kind: kind, Mode: mode, Declaration: declaration})
 			}
 			for amount := 1; amount <= s.Config.Target; amount++ {
@@ -96,7 +88,6 @@ func referenceLegalActions(s State, seat int) []Command {
 			}
 			add(Command{Type: "respond", Kind: "raise", Amount: 100, Mode: mode, Declaration: declaration})
 		}
-		add(Command{Type: "respond", Kind: "decline", Mode: "sin_ley", Declaration: declaration})
 	}
 	return legal
 }

@@ -65,7 +65,12 @@ func TestBothTeammatesNeedALeyToKeepTheirOrdinaryFlores(t *testing.T) {
 		state = apply(t, state, 1, rules.Command{Type: "play", Card: 0, Declaration: "flor"})
 		state = apply(t, state, 2, rules.Command{Type: "play", Card: 0, Declaration: firstDeclaration})
 		state = apply(t, state, 3, rules.Command{Type: "play", Card: 0})
-		state = apply(t, state, 0, rules.Command{Type: "play", Card: 0, Declaration: "flor"})
+		second := rules.Command{Type: "play", Card: 0, Declaration: "flor"}
+		if firstDeclaration != "a_ley" {
+			assertRejectedCanto(t, state, 0, second)
+			second.Declaration = ""
+		}
+		state = apply(t, state, 0, second)
 		assert.True(t, state.Players[2].FlorValid)
 		assert.Equal(t, firstDeclaration == "a_ley", state.Players[0].FlorValid)
 	}

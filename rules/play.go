@@ -28,6 +28,7 @@ func (s *State) play(seat int, command Command, timeout bool) error {
 	if stack && (s.Round != 1 || command.Top < 0 || command.Top >= 3 || command.Top == command.Card || p.Used[command.Top]) {
 		return fmt.Errorf("invalid pegado")
 	}
+	s.BareLey = !timeout && s.Round == 0 && command.Declaration == "a_ley"
 	if !timeout || s.Round == 0 {
 		s.declareCards(seat, command.Declaration)
 	}
@@ -55,7 +56,7 @@ func (s *State) declareCards(seat int, declaration string) {
 	if !p.FlorValid || p.Holding.Receta {
 		return
 	}
-	if !s.Config.FlorRequired {
+	if p.FlorEnvidada || !s.Config.FlorRequired {
 		if declaresFlor(declaration) {
 			p.FlorDeclared = true
 		}
@@ -78,7 +79,10 @@ func (s *State) declareCards(seat int, declaration string) {
 		} else {
 			s.FlorClaimant[team] = seat
 			if s.Config.Players == 4 {
-				s.burnFlor((seat + 2) % 4)
+				partner := (seat + 2) % 4
+				if !s.Players[partner].FlorEnvidada {
+					s.burnFlor(partner)
+				}
 			}
 		}
 	}
@@ -183,21 +187,23 @@ func (s *State) advanceCards() {
 }
 
 func (s State) roundWinner(round int) int {
-	best, winner, ties := 0, -1, 0
-	for seat := 0; seat < s.Config.Players; seat++ {
+	best, winner := 0, -1
+	for offset := 0; offset < s.Config.Players; offset++ {
+		seat := (s.Mano + offset) % s.Config.Players
 		play := s.Players[seat].Plays[round]
 		if !play.Present || play.Burned || play.Concealed {
 			continue
 		}
 		strength := Strength(play.Card, s.Vira)
 		if strength > best {
-			best, winner, ties = strength, seat, 1
-		} else if strength == best {
-			ties++
+			best, winner = strength, seat
+		} else if strength == best && winner >= 0 {
+			// Only opposing high cards empardan the first trick. When two
+			// teammates share the high card, its first player leads next.
+			if round != 0 || s.Team(seat) != s.Team(winner) {
+				winner = -1
+			}
 		}
-	}
-	if ties != 1 {
-		return -1
 	}
 	return winner
 }

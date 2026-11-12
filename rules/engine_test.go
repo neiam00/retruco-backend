@@ -141,17 +141,66 @@ func TestLeyScoresBeforeFlorAndEndsMatch(t *testing.T) {
 	assert.Equal(t, s.Payouts, s.LastHand.Payouts, "recap must not include flor or truco after the match was won")
 }
 
-func TestOrdinaryEnvidoWithFlorWordingPreservesCallerAndOpposingFlorBlocks(t *testing.T) {
+func TestOrdinaryEnvidoCannotDeclareFlorOnTheSameCall(t *testing.T) {
 	s := fixture(t, false,
 		[3]rules.Card{{rules.Clubs, 7}, {rules.Clubs, 6}, {rules.Clubs, 5}},
 		[3]rules.Card{{rules.Cups, 7}, {rules.Cups, 6}, {rules.Cups, 5}})
-	s = apply(t, s, 1, rules.Command{Type: "call", Kind: "envido", Declaration: "con_mi_flor"})
-	assert.True(t, s.Players[1].FlorValid)
+	require.True(t, s.Players[1].FlorValid)
+	for _, prefix := range []string{"", "con_mi_flor", "flor", "presento_flor", "flor_flor", "con_flor", "a_ley"} {
+		assertRejectedCanto(t, s, 1, rules.Command{Type: "call", Kind: "envido", Declaration: prefix})
+	}
+	s = fixture(t, false, s.Players[0].Cards, [3]rules.Card{{rules.Coins, 7}, {rules.Coins, 6}, {rules.Spades, 5}})
+	s = apply(t, s, 1, rules.Command{Type: "call", Kind: "envido"})
 	s = apply(t, s, 0, rules.Command{Type: "respond", Kind: "flowers_no"})
 	assert.True(t, s.EnvidoCanceled)
 	assert.True(t, s.Players[0].FlorValid)
 	_, _, err := rules.Apply(s, 1, rules.Command{Type: "call", Kind: "envido"})
 	assert.Error(t, err)
+}
+
+func TestOnlyOpposingHighestCardsForcePegado(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		first  [4]int
+		next   int
+		pegado bool
+	}{
+		{"teammates alone tie at the top", [4]int{3, 5, 3, 6}, 2, false},
+		{"opponents tie at the top", [4]int{3, 3, 6, 5}, 1, true},
+		{"two teammates and an opponent tie at the top", [4]int{3, 3, 3, 5}, 1, true},
+		{"lower equal cards do not force pegado", [4]int{2, 5, 3, 5}, 2, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var hands [][3]rules.Card
+			for seat, suit := range []rules.Suit{rules.Clubs, rules.Cups, rules.Coins, rules.Spades} {
+				hands = append(hands, [3]rules.Card{{suit, tc.first[seat]}, {suit, 10}, {suit, 12}})
+			}
+			s := fixture(t, false, hands...)
+			for range 4 {
+				s = apply(t, s, s.Turn, rules.Command{Type: "play", Card: 0})
+			}
+			require.Equal(t, 1, s.Round)
+			assert.Equal(t, tc.pegado, s.MandatoryStack)
+			assert.Equal(t, tc.next, s.Turn)
+			legal := rules.LegalActions(s, s.Turn)
+			plain := rules.Command{Type: "play", Card: 1}
+			assert.Contains(t, legal, rules.Command{Type: "stack", Card: 1, Top: 2})
+			if tc.pegado {
+				assert.NotContains(t, legal, plain)
+				_, _, err := rules.Apply(s, s.Turn, plain)
+				assert.Error(t, err)
+				return
+			}
+			require.Contains(t, legal, plain)
+			caller := s.Turn
+			s = apply(t, s, caller, rules.Command{Type: "call", Kind: "truco"})
+			s = apply(t, s, (caller+1)%4, rules.Command{Type: "respond", Kind: "decline"})
+			require.NotNil(t, s.LastHand)
+			assert.Equal(t, "won", s.LastHand.Tricks[0].Status)
+			assert.Equal(t, tc.next, s.LastHand.Tricks[0].WinnerSeat)
+			assert.Equal(t, tc.next%2, s.LastHand.Tricks[0].WinnerTeam)
+		})
+	}
 }
 
 func TestMandatoryPegadoUsesTopFirstAndKeepsBottomHidden(t *testing.T) {
@@ -215,7 +264,7 @@ func TestVoluntaryPegadoBurnsLosingTopCard(t *testing.T) {
 }
 
 func TestFlorFlorPreservesStackedFlor(t *testing.T) {
-	for _, declaration := range []string{"flor_flor", "presento_flor", "flor", "con_mi_flor", ""} {
+	for _, declaration := range []string{"flor_flor", ""} {
 		s := fixture(t, true,
 			[3]rules.Card{{rules.Clubs, 3}, {rules.Cups, 4}, {rules.Spades, 1}},
 			[3]rules.Card{{rules.Coins, 3}, {rules.Coins, 7}, {rules.Coins, 6}})
@@ -277,6 +326,6 @@ func TestRecetaWagerReplacesAutomaticPointAndDoesNotGuaranteeTruco(t *testing.T)
 	s = apply(t, s, 1, rules.Command{Type: "call", Kind: "truco"})
 	s = apply(t, s, 0, rules.Command{Type: "respond", Kind: "raise", Amount: 9})
 	s = apply(t, s, 1, rules.Command{Type: "respond", Kind: "decline"})
-	assert.Equal(t, [2]int{6, 5}, s.Scores, "receta receives 3 flor + 2 envido; opponent gets 3 flor + 3 truco")
+	assert.Equal(t, [2]int{3, 5}, s.Scores, "receta wins flor and envido; the opposing flor burns and its team scores truco")
 	assert.Equal(t, 0, s.HandWinner)
 }

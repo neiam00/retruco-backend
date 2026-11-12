@@ -31,14 +31,18 @@ func TestLegalActionsKeepTeammateResponsesAndTrucoInterruptions(t *testing.T) {
 		// current card turn. The pending truco must still block playing a card.
 		assert.Contains(t, actions, rules.Command{Type: "respond", Kind: "accept"})
 		assert.Contains(t, actions, rules.Command{Type: "respond", Kind: "raise", Amount: 100})
-		assert.Contains(t, actions, rules.Command{Type: "call", Kind: "envido"})
+		if state.Players[seat].FlorValid && !state.Players[seat].Holding.Receta {
+			assert.NotContains(t, actions, rules.Command{Type: "call", Kind: "envido"})
+		} else {
+			assert.Contains(t, actions, rules.Command{Type: "call", Kind: "envido"})
+		}
 		assert.Contains(t, actions, rules.Command{Type: "call", Kind: "ley_envido"})
 		for _, command := range actions {
 			assert.Contains(t, []string{"call", "respond"}, command.Type)
 		}
 	}
 	interrupter := (caller + 1) % 4
-	state = apply(t, state, interrupter, rules.Command{Type: "call", Kind: "envido"})
+	state = apply(t, state, interrupter, rules.Command{Type: "call", Kind: "ley_envido"})
 	for seat := range 4 {
 		actions := rules.LegalActions(state, seat)
 		if state.Team(seat) == state.Team(interrupter) {
@@ -46,7 +50,11 @@ func TestLegalActionsKeepTeammateResponsesAndTrucoInterruptions(t *testing.T) {
 			continue
 		}
 		require.NotEmpty(t, actions)
-		assert.Contains(t, actions, rules.Command{Type: "respond", Kind: "decline"})
+		mode := "sin_ley"
+		if state.Players[seat].FlorValid && !state.Players[seat].Holding.Receta {
+			mode = "con_ley"
+		}
+		assert.Contains(t, actions, rules.Command{Type: "respond", Kind: "decline", Mode: mode})
 		for _, command := range actions {
 			assert.Equal(t, "respond", command.Type)
 		}

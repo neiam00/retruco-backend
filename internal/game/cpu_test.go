@@ -158,8 +158,8 @@ func TestCPUCantoRepliesDeferToHumanTeammates(t *testing.T) {
 		{"raise truco", "truco", rules.Command{Type: "respond", Kind: "raise", Amount: 6}, false},
 		{"interrupt truco", "truco", rules.Command{Type: "call", Kind: "ley_envido"}, false},
 		{"envido", "envido", rules.Command{Type: "respond", Kind: "decline"}, false},
-		{"ley envido", "ley_envido", rules.Command{Type: "respond", Kind: "decline"}, false},
-		{"flor", "flor", rules.Command{Type: "respond", Kind: "decline"}, false},
+		{"ley envido", "ley_envido", rules.Command{Type: "respond", Kind: "decline", Mode: "con_ley"}, false},
+		{"flor", "flor", rules.Command{Type: "respond", Kind: "decline", Mode: "con_ley"}, false},
 		{"privo", "privo", rules.Command{Type: "respond", Kind: "decline"}, false},
 		{"CPU-only team", "truco", rules.Command{Type: "respond", Kind: "accept"}, true},
 	} {
