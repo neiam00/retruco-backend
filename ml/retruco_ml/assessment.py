@@ -196,6 +196,7 @@ def assess_parallel(
     ablation="none",
     workers=8,
     environments=64,
+    executable=None,
 ):
     """Batch inference and native IPC; keep independent RNG streams per deal/seat.
 
@@ -209,10 +210,15 @@ def assess_parallel(
     counts = Counter()
     decisions = 0
     started = time.monotonic()
-    with SimulatorPool(workers) as pool:
+    from .improvement_population import improvement_scripted
+    from .release_recurrent import BrowserActor, SeatJournals
+
+    recurrent = isinstance(model, BrowserActor)
+    with SimulatorPool(workers, "binary" if recurrent else "json", executable) as pool:
         for start in range(0, len(tasks), environments):
             episodes = {}
             requests = []
+            journals = SeatJournals(model, ablation) if recurrent else None
             for identity, (pair, team) in enumerate(
                 tasks[start : start + environments]
             ):
@@ -220,12 +226,18 @@ def assess_parallel(
                 partner_seat = (team + 2 * (pair % 2) + 2) % 4
                 if players == 4 and partner != "learned":
                     roles[partner_seat] = False
+                style = opponent_for_pair(opponent, seed, pair)
+                if recurrent and opponent_model is None and style == "deceptive":
+                    # Deceptive human-role signals are intentional opponent behavior.
+                    for seat in range(players):
+                        if seat % 2 != team:
+                            roles[seat] = False
                 episodes[identity] = (
                     pair,
                     team,
                     [random.Random((seed + pair) * 11 + s) for s in range(players)],
                     partner_seat,
-                    opponent_for_pair(opponent, seed, pair),
+                    style,
                 )
                 requests.append(
                     {
@@ -240,10 +252,24 @@ def assess_parallel(
                         "roles": roles,
                     }
                 )
+                if journals is not None:
+                    seats = [
+                        s
+                        for s in range(players)
+                        if s % 2 == team
+                        and (
+                            players == 2
+                            or s != partner_seat
+                            or (partner == "learned" and partner_model is None)
+                        )
+                    ]
+                    journals.reset(requests[-1], seats)
             observations = dict(enumerate(pool.call(requests)))
             for _ in range(10000):
                 if not observations:
                     break
+                if journals is not None:
+                    journals.consume(pool, observations)
                 chosen = {}
                 groups = {}
                 recorded = set()
@@ -262,8 +288,16 @@ def assess_parallel(
                             )
                             continue
                     elif players == 4 and seat == partner_seat and partner != "learned":
-                        chosen[identity] = scripted(observation, partner, rng)
-                        continue
+                        if partner == "reference-human" and partner_model is not None:
+                            actor = partner_model
+                        else:
+                            choose_partner = (
+                                improvement_scripted
+                                if partner.endswith(("-v2", "-v3"))
+                                else scripted
+                            )
+                            chosen[identity] = choose_partner(observation, partner, rng)
+                            continue
                     else:
                         actor = (
                             partner_model
@@ -284,6 +318,8 @@ def assess_parallel(
                         "both",
                     ):
                         chosen[identity] = 0
+                    elif journals is not None and actor is model:
+                        chosen[identity] = journals.choose(identity, observation, rng)
                     else:
                         groups.setdefault((id(actor), mode), [actor, []])[1].append(
                             identity
@@ -319,7 +355,13 @@ def assess_parallel(
                         command = observation["legal"][action]
                         counts[command["type"] + ":" + command.get("kind", "")] += 1
                 requests = [
-                    {"op": "step", "id": i, "action": chosen[i]} for i in observations
+                    {
+                        "op": "step",
+                        "id": i,
+                        "action": chosen[i],
+                        **(journals.parameters(i) if journals is not None else {}),
+                    }
+                    for i in observations
                 ]
                 decisions += len(requests)
                 for request, observation in zip(
