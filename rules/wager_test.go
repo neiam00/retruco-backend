@@ -60,7 +60,7 @@ func TestTrucoVoiceAlternatesAcrossTurnsAndRounds(t *testing.T) {
 	assertTrucoCalls(t, state, 1, nil)
 
 	state = apply(t, state, 1, rules.Command{Type: "play", Card: 0})
-	assertTrucoCalls(t, state, 0, []int{6, 9, 100})
+	assertTrucoCalls(t, state, 0, []int{6, 100})
 	state = apply(t, state, 0, rules.Command{Type: "call", Kind: "truco", Amount: 6})
 	state = apply(t, state, 1, rules.Command{Type: "respond", Kind: "accept"})
 	assertTrucoCalls(t, state, 0, nil)
@@ -93,6 +93,7 @@ func TestTrucoVoiceBelongsToTheTeam(t *testing.T) {
 	}
 	// Either rival may counter, even though neither has the card turn.
 	for _, seat := range []int{0, 2} {
+		assertRejectedCanto(t, state, seat, rules.Command{Type: "respond", Kind: "raise", Amount: 9})
 		_, _, err := rules.Apply(state, seat, rules.Command{Type: "respond", Kind: "raise", Amount: 6})
 		require.NoError(t, err)
 	}

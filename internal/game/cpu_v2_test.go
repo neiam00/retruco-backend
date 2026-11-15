@@ -73,7 +73,7 @@ func TestCPUv2ConsumesSignalOpportunitiesWithoutChangingDeadline(t *testing.T) {
 	assert.Equal(t, before.Deadline, after.Deadline)
 	work := host.CPUWork(code, user.ID, "controller")
 	require.Equal(t, "game", work.Kind)
-	require.Equal(t, "value-and-team-v8", work.Features.ChoicePolicy)
+	require.Equal(t, "value-and-team-v9", work.Features.ChoicePolicy)
 	require.Len(t, work.Features.Actions, len(work.View.Legal))
 	for i, c := range work.View.Legal {
 		assert.Equal(t, learning.EncodeAction(c), work.Features.Actions[i], "browser indices must address the same approved CPU candidate")

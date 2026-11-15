@@ -7,7 +7,8 @@ import (
 )
 
 // PlayingProfile identifies the CPU choices used in live games and paired evaluations.
-const PlayingProfile = "value-and-team-v8"
+const PlayingProfile = "value-and-team-v9"
+const OpeningDefenseProfile = "value-and-team-v8"
 const ReferenceEnvidoProfile = "value-and-team-v7"
 const PartnershipProfile = "value-and-team-v6"
 const CompulsoryPericoProfile = "value-and-team-v5"
@@ -36,14 +37,15 @@ func PolicyChoices(v rules.View, seat int, profile string) ([]rules.Command, boo
 		v.Vira == nil || !v.Vira.Valid() || v.Holding == nil || len(v.Hand) != 3 || len(v.Seats) != n || len(v.Legal) < 2 {
 		return v.Legal, false
 	}
-	referenceEnvido := profile == PlayingProfile || profile == ReferenceEnvidoProfile
+	openingDefense := profile == PlayingProfile || profile == OpeningDefenseProfile
+	referenceEnvido := openingDefense || profile == ReferenceEnvidoProfile
 	partnershipProfile := profile == PartnershipProfile || referenceEnvido
 	pericoProfile := profile == CompulsoryPericoProfile || partnershipProfile
 	teamProfile := profile == TeamStackProfile || pericoProfile
 	capRaiseAtTarget := profile == HeadsUpWagerProfile || teamProfile
 	e := wagerAssessment{view: v, seat: seat, priceOpening: n == 4 && referenceEnvido, revised: profile == HeadsUpCardProfile || capRaiseAtTarget,
 		capRaiseAtTarget: capRaiseAtTarget, capTruco: teamProfile && (n == 4 || pericoProfile)}
-	e.headsUpDefense = n == 2 && profile == PlayingProfile
+	e.headsUpDefense = n == 2 && openingDefense
 	if e.headsUpDefense {
 		e.pegado = againstShownStack(v, seat)
 	}

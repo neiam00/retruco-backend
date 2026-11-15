@@ -195,7 +195,7 @@ func LegalActions(s State, seat int) []Command {
 				add(Command{Type: "call", Kind: "ley_envido", Mode: s.leyReplyMode(seat)})
 			}
 			for _, amount := range []int{3, 6, 9, 100} {
-				if amount > s.TrucoValue && (s.TrucoValue != 1 || amount == 3) {
+				if canRaiseTruco(s.TrucoValue, amount) {
 					add(Command{Type: "call", Kind: "truco", Amount: amount, Declaration: declaration})
 				}
 			}
@@ -219,7 +219,7 @@ func LegalActions(s State, seat int) []Command {
 			if !s.Pending.Terminal {
 				if s.Pending.Kind == "truco" {
 					for _, amount := range []int{3, 6, 9, 100} {
-						if amount > s.Pending.Value {
+						if canRaiseTruco(s.Pending.Value, amount) {
 							add(Command{Type: "respond", Kind: "raise", Amount: amount, Mode: mode, Declaration: declaration})
 						}
 					}

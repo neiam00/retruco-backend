@@ -303,7 +303,8 @@ def evaluate_audit(root, project):
     )
 
     def performance():
-        p = load(base / "performance-v7.json")
+        profile = conf["choice_policy"].removeprefix("value-and-team-")
+        p = load(base / f"performance-{profile}.json")
         require(
             p["casesSha256"] == digest(base / "performance-cases.json")
             and p.get("performancePass") is True,

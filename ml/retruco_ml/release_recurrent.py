@@ -80,7 +80,7 @@ class BrowserActor:
                 raise ValueError("Artifact is not the exact checked checkpoint export")
         self.float_actor = model if fp32 else None
         self.native = ctypes.CDLL(str(Path(library).resolve()))
-        if self.profile == "value-and-team-v8" and (
+        if self.profile in ("value-and-team-v8", "value-and-team-v9") and (
             not hasattr(self.native, "opening_bluff_version")
             or self.native.opening_bluff_version() != 1
         ):

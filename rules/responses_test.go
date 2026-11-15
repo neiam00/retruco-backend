@@ -20,9 +20,14 @@ func TestTrucoOffersEachReplyOnceWithoutLeyVariants(t *testing.T) {
 		{Type: "respond", Kind: "accept"},
 		{Type: "respond", Kind: "decline"},
 		{Type: "respond", Kind: "raise", Amount: 6},
-		{Type: "respond", Kind: "raise", Amount: 9},
 		{Type: "respond", Kind: "raise", Amount: 100},
 	}, replies)
+	assertRejectedCanto(t, state, 0, rules.Command{Type: "respond", Kind: "raise", Amount: 9})
+	retruco := apply(t, state, 0, rules.Command{Type: "respond", Kind: "raise", Amount: 6})
+	nine := apply(t, retruco, 1, rules.Command{Type: "respond", Kind: "raise", Amount: 9})
+	assert.Equal(t, 6, nine.Pending.Previous)
+	settled := apply(t, nine, 0, rules.Command{Type: "respond", Kind: "decline"})
+	assert.Equal(t, 6, settled.Scores[1], "declining Vale 9 pays the previously offered Retruco")
 }
 
 func TestLeyResponseChoicesExistOnlyUntilTheModeIsChosen(t *testing.T) {

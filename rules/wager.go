@@ -28,7 +28,7 @@ func (s *State) call(seat int, c Command) error {
 		if amount == 0 {
 			amount = 3
 		}
-		if !trucoLevel(amount) || amount <= s.TrucoValue || (s.TrucoValue == 1 && amount != 3) {
+		if !canRaiseTruco(s.TrucoValue, amount) {
 			return fmt.Errorf("invalid truco level")
 		}
 		s.declareCanto(seat, c.Declaration)
@@ -179,7 +179,7 @@ func (s *State) respond(seat int, c Command, automatic bool) error {
 	terminal := false
 	if wager.Kind == "truco" {
 		next = c.Amount
-		if c.Kind != "raise" || !trucoLevel(next) || next <= wager.Value {
+		if c.Kind != "raise" || !canRaiseTruco(wager.Value, next) {
 			return fmt.Errorf("invalid truco raise")
 		}
 	} else if c.Kind == "falta" {
@@ -201,7 +201,20 @@ func (s *State) respond(seat int, c Command, automatic bool) error {
 	return nil
 }
 
-func trucoLevel(value int) bool { return value == 3 || value == 6 || value == 9 || value == 100 }
+// The wager being answered may already exceed the last accepted TrucoValue.
+func canRaiseTruco(from, to int) bool {
+	switch to {
+	case 3:
+		return from == 1
+	case 6:
+		return from == 3
+	case 9:
+		return from == 6
+	case 100:
+		return from == 3 || from == 6 || from == 9
+	}
+	return false
+}
 
 func (s *State) resumeTruco() { s.Pending, s.Suspended = s.Suspended, nil }
 
