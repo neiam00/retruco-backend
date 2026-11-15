@@ -30,7 +30,11 @@ def collect_cases(actor, executable, choice_policy=None):
     )
     cases = []
     with Simulator(executable, "binary") as simulator, torch.no_grad():
-        if choice_policy in ("value-and-team-v8", "value-and-team-v9", "value-and-team-v10"):
+        if choice_policy in (
+            "value-and-team-v8",
+            "value-and-team-v9",
+            "value-and-team-v10",
+        ):
             obs = simulator.call(
                 [
                     {
