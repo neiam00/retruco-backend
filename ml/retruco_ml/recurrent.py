@@ -14,6 +14,17 @@ TEAM_ADAPTER_VERSION = 1
 ARMS = {"A": (False, False), "B": (True, False), "C": (False, True), "D": (True, True)}
 
 
+def limit_opening_bluff(logits, marked):
+    """Limit newly admitted weak opening Trucos to at most 4.75% in total."""
+    if not marked.any():
+        return logits
+    best = logits.masked_fill(marked, -torch.inf).amax(-1, keepdim=True)
+    if not best.isfinite().all():
+        raise ValueError("An opening bluff requires a legal alternative")
+    ceiling = best - 3.0 - (marked.sum(-1, keepdim=True) - 1).clamp(min=0)
+    return torch.where(marked, torch.minimum(logits, ceiling), logits)
+
+
 class Actor(nn.Module):
     def __init__(self, recurrent=False, memory_size=16, team_adapter=None):
         super().__init__()
@@ -100,6 +111,9 @@ class Actor(nn.Module):
         # small scoring head in double precision so batch-shaped GEMMs do not
         # quantize meaningful action differences before normalization. Casts
         # remain differentiable; stored parameters/optimizer states stay FP32.
+        if (actions[..., 47] == -1).any():
+            actions = actions.clone()
+            actions[..., 47].masked_fill_(actions[..., 47] == -1, 0)
         if self.candidate_features:
             from .candidate_features import augment
 
@@ -178,6 +192,7 @@ class Actor(nn.Module):
             logits = self.game_logits(
                 context.expand(len(actions), -1), actions, features
             )
+            logits = limit_opening_bluff(logits, actions[:, 47] == -1)
         return centered_categorical(logits)
 
 

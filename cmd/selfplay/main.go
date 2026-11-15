@@ -44,7 +44,7 @@ func requestedProfile(name string) (string, error) {
 	switch name {
 	case "":
 		return cpu.OriginalPlayingProfile, nil
-	case cpu.OriginalPlayingProfile, cpu.HeadsUpCardProfile, cpu.HeadsUpWagerProfile, cpu.TeamStackProfile, cpu.CompulsoryPericoProfile, cpu.PartnershipProfile, cpu.PlayingProfile:
+	case cpu.OriginalPlayingProfile, cpu.HeadsUpCardProfile, cpu.HeadsUpWagerProfile, cpu.TeamStackProfile, cpu.CompulsoryPericoProfile, cpu.PartnershipProfile, cpu.ReferenceEnvidoProfile, cpu.PlayingProfile:
 		return name, nil
 	default:
 		return "", fmt.Errorf("unknown CPU choice policy %q", name)
@@ -62,8 +62,9 @@ func encodeView(r request) (learning.Observation, error) {
 		return learning.Observation{}, err
 	}
 	view := *r.View
+	openingBluff := false
 	if r.Kind == "game" && r.PlayingSeats[r.Seat] {
-		view.Legal = cpu.ChoicesForProfile(view, r.Seat, profile)
+		view.Legal, openingBluff = cpu.PolicyChoices(view, r.Seat, profile)
 	}
 	o := learning.Observation{Version: learning.Version, Seat: r.Seat, Kind: r.Kind, View: &view,
 		Features: learning.Encode(view, r.Seat, *r.Context), Legal: view.Legal,
@@ -73,7 +74,7 @@ func encodeView(r request) (learning.Observation, error) {
 			o.ChoicePolicy = profile
 		}
 		for _, command := range view.Legal {
-			o.Actions = append(o.Actions, learning.EncodeAction(command))
+			o.Actions = append(o.Actions, learning.PolicyAction(command, openingBluff))
 		}
 	} else {
 		o.Legal = nil

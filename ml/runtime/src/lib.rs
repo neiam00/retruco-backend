@@ -30,6 +30,11 @@ static mut FORMAT: u32 = 0;
 static mut MEMORY: [f32; 128] = [0.0; 128];
 
 #[no_mangle]
+pub extern "C" fn opening_bluff_version() -> u32 {
+    1
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn memory_size() -> usize {
     HIDDEN_SIZE
 }
@@ -519,6 +524,51 @@ unsafe fn recurrent_logits(hidden: &[f32; 64], count: usize, signal: u32) -> i32
 }
 #[no_mangle]
 pub unsafe extern "C" fn infer(count: usize, signal: u32) -> i32 {
+    if signal != 0 || count > 1024 {
+        return raw_infer(count, signal);
+    }
+    // V8 marks only a newly admitted, weak opening Truco. Strip the decision
+    // constraint before scoring the frozen network. Its aggregate odds cannot
+    // exceed exp(-3) against even the best single alternative.
+    let mut marked = [false; 1024];
+    let mut n = 0;
+    for i in 0..count {
+        if ACTIONS[i * 48 + 47] == -1.0 {
+            marked[i] = true;
+            ACTIONS[i * 48 + 47] = 0.0;
+            n += 1;
+        }
+    }
+    let result = raw_infer(count, signal);
+    if n == 0 {
+        return result;
+    }
+    for i in 0..count {
+        if marked[i] {
+            ACTIONS[i * 48 + 47] = -1.0;
+        }
+    }
+    if result != count as i32 || n == count {
+        return -3;
+    }
+    let mut best = f32::NEG_INFINITY;
+    for i in 0..count {
+        if !marked[i] {
+            best = best.max(OUTPUT[i]);
+        }
+    }
+    for i in 0..count {
+        let relative = OUTPUT[i] - best;
+        OUTPUT[i] = if marked[i] {
+            relative.min(-3.0 - (n - 1) as f32)
+        } else {
+            relative
+        };
+    }
+    result
+}
+
+unsafe fn raw_infer(count: usize, signal: u32) -> i32 {
     if !READY || count > 1024 || (signal == 0 && count == 0) || signal > 1 {
         return -1;
     }

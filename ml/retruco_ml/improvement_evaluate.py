@@ -9,6 +9,7 @@ import torch
 
 from .controlled_train import atomic_json
 from .cooperation_diagnostics import DecisionContexts, redundant_signal
+from .holdout import validate_reservations
 from .improvement_behavior import ImprovementBehavior
 from .improvement_budget import DeadlineReached, check_deadline
 from .improvement_population import improvement_scripted, reactive_style
@@ -107,14 +108,33 @@ def evaluate(
     signals="normal",
     players=4,
     card_policy="policy",
+    *,
+    release_reservation=None,
 ):
+    if release_reservation is None:
+        if not 100000 <= seed < seed + pairs < 200000:
+            raise ValueError("unsupported development evaluation")
+    else:
+        ledger_path, fingerprint = release_reservation
+        ledger = json.loads(Path(ledger_path).read_text())
+        if ledger.get("format") != 1:
+            raise ValueError("unknown release reservation format")
+        validate_reservations(ledger["reservations"])
+        reservation = ledger["reservations"].get(fingerprint)
+        if (
+            not reservation
+            or (seed, pairs) != (reservation["seed"], reservation["pairs"])
+            or pairs < 2000
+        ):
+            raise ValueError(
+                "evaluation does not match the reserved release deal block"
+            )
     if (
         pairs < 2
         or signals not in SIGNAL_MODES
         or card_policy not in ("policy", "highest", *PROBES)
         or opponent not in FAMILIES
         or partner not in PARTNERS
-        or not 100000 <= seed < seed + pairs < 200000
         or players not in (0, 2, 4)
     ):
         raise ValueError("unsupported development evaluation")
@@ -421,7 +441,10 @@ def evaluate(
         "response_families": response_families,
         "response_family_key": "players/canto/value/terminal/visible_partner_claim",
         "approved": False,
-        "scope": "development study; behavior counters are descriptive, not causal bluff evidence",
+        "scope": "reserved release deals"
+        if release_reservation
+        else "development study; behavior counters are descriptive, not causal bluff evidence",
+        **({"release_fingerprint": fingerprint} if release_reservation else {}),
     }
 
 

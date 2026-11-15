@@ -61,7 +61,17 @@ def copy_checked(source, target, expected):
     return expected
 
 
-def specifications():
+DEFAULT_RESPONSES = ((2, 901), (2, 902), (2, 903), (4, 904), (4, 905), (4, 906))
+
+
+def specifications(response_seeds=DEFAULT_RESPONSES):
+    if (
+        sorted(n for n, _ in response_seeds) != [2, 2, 2, 4, 4, 4]
+        or len({s for _, s in response_seeds}) != 6
+    ):
+        raise ValueError(
+            "Require three independent response opponents for each match size"
+        )
     jobs = {}
 
     def add(name, **changes):
@@ -102,15 +112,17 @@ def specifications():
         )
     for style in ("baseline", "cautious"):
         add("bluff-" + style, kind="bluff", players=2, opponent=style)
-    for n, seed in ((2, 901), (2, 902), (2, 903), (4, 904), (4, 905), (4, 906)):
+    for n, seed in response_seeds:
         add(f"response-{n}p-{seed}", players=n, response_seed=seed)
     return jobs
 
 
-def prepare(root, project, revision):
+def prepare(root, project, revision, candidate_run="reference-envido-v1"):
     root = Path(root)
     project = Path(project)
-    run = project / "ml/runs/reference-envido-v1"
+    if Path(candidate_run).name != candidate_run or candidate_run in ("", ".", ".."):
+        raise ValueError("Expected a campaign name under ml/runs")
+    run = project / "ml/runs" / candidate_run
     candidate = run / "browser-candidate"
     m = load(candidate / "manifest.json")
     if (
@@ -181,6 +193,8 @@ def prepare(root, project, revision):
     for sub in ("reports", "receipts", "logs", "partial"):
         (root / sub).mkdir(exist_ok=True)
     config = {
+        "candidate_run": candidate_run,
+        "response_seeds": external["opponents"],
         "protocol": "format4-release-qualification-v1",
         "source_commit": revision,
         "source_files": sources,
@@ -198,7 +212,7 @@ def prepare(root, project, revision):
         "seat_schedule": SEAT_SCHEDULE,
         "opponent_schedule": POPULATION_SCHEDULE,
         "opponent_styles": list(MIXTURE_STYLES),
-        "specifications": specifications(),
+        "specifications": specifications(external["opponents"]),
         "behavior_thresholds": {
             "bluff": "positive policy probability and lower paired win-gain CI above zero on baseline weak-opening-v1",
             "adaptation": "lower paired win-gain CI above zero on the population",
@@ -225,7 +239,9 @@ def check_inputs(root, project):
     validate_reservations(ledger["reservations"])
     if row["fingerprint"] != ident or ledger["reservations"].get(ident) != row:
         raise ValueError("Unverified holdout reservation")
-    if conf["specifications"] != specifications():
+    if conf["specifications"] != specifications(
+        conf.get("response_seeds", DEFAULT_RESPONSES)
+    ):
         raise ValueError("Protocol plan mismatch")
     code = Path(__file__).resolve().parents[2]
     if any(digest(code / name) != h for name, h in conf["source_files"].items()):
@@ -417,6 +433,7 @@ def main():
     p.add_argument("command", choices=["prepare", "base", "responses"])
     p.add_argument("--root", type=Path, required=True)
     p.add_argument("--project", type=Path, required=True)
+    p.add_argument("--candidate-run", default="reference-envido-v1")
     p.add_argument("--jobs", type=int, default=6)
     p.add_argument("--environments", type=int, default=32)
     a = p.parse_args()
@@ -440,7 +457,9 @@ def main():
             ["git", "-C", str(code), "rev-parse", "HEAD"], text=True
         ).strip()
         print(
-            "Frozen full format-4 evaluation", prepare(root, project, rev), flush=True
+            "Frozen full format-4 evaluation",
+            prepare(root, project, rev, a.candidate_run),
+            flush=True,
         )
         return
     conf, ident, row = check_inputs(root, project)

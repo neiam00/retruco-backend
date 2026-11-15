@@ -272,3 +272,13 @@ func EncodeAction(c rules.Command) [ActionSize]float32 {
 	x[35] = float32(c.Amount) / 100
 	return x
 }
+
+// Slot 47 is a decision constraint on the newly admitted ordinary bluff.
+// It is removed before neural scoring. Other commands keep their v2 encoding.
+func PolicyAction(c rules.Command, openingBluff bool) [ActionSize]float32 {
+	x := EncodeAction(c)
+	if openingBluff && c == (rules.Command{Type: "call", Kind: "truco", Amount: 3}) {
+		x[47] = -1
+	}
+	return x
+}

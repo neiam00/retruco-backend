@@ -52,8 +52,9 @@ func (r *room) cpuWorkV2(m *Match) CPUWork {
 		}
 	}
 	view := rules.ViewFor(state, w.Seat, false)
+	openingBluff := false
 	if w.Kind == "game" {
-		view.Legal = cpu.PlayingChoices(view, w.Seat)
+		view.Legal, openingBluff = cpu.PolicyChoices(view, w.Seat, cpu.PlayingProfile)
 	}
 	if w.Kind == "game" && len(view.Legal) == 0 {
 		w.Seat = -1
@@ -69,7 +70,7 @@ func (r *room) cpuWorkV2(m *Match) CPUWork {
 	if w.Kind == "game" {
 		w.Features.ChoicePolicy = cpu.PlayingProfile
 		for _, c := range view.Legal {
-			w.Features.Actions = append(w.Features.Actions, learning.EncodeAction(c))
+			w.Features.Actions = append(w.Features.Actions, learning.PolicyAction(c, openingBluff))
 		}
 	}
 	r.attachCPUMemory(m, &w)

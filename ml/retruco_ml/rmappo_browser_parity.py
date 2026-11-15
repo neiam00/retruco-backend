@@ -16,7 +16,7 @@ from .bridge import Simulator
 from .bundle import runtime_sources
 from .mappo_export import load_actor, quantized
 from .parity import differences
-from .recurrent import Replay
+from .recurrent import Replay, limit_opening_bluff
 from .team_play_probe import CHOICE_PROFILES, team_action
 
 
@@ -30,6 +30,45 @@ def collect_cases(actor, executable, choice_policy=None):
     )
     cases = []
     with Simulator(executable, "binary") as simulator, torch.no_grad():
+        if choice_policy == "value-and-team-v8":
+            obs = simulator.call(
+                [
+                    {
+                        **options,
+                        "op": "reset",
+                        "id": 0,
+                        "fixture": "weak-opening-v1",
+                        "training": True,
+                        "truthfulCPU": True,
+                        "seed": 124999,
+                        "config": {"players": 2, "target": 12, "florRequired": False},
+                    }
+                ]
+            )[0]
+            page = obs["training"]["memory"]
+            if (
+                page["start"] != 0
+                or page["end"] != page["total"]
+                or (obs["actions"][:, 47] == -1).sum() != 1
+            ):
+                raise ValueError(
+                    "Missing the authentic weak opening and its complete journal"
+                )
+            cases.append(
+                {
+                    "name": "heads-up-weak-opening",
+                    "features": obs["features"].tolist(),
+                    "actions": obs["actions"].tolist(),
+                    "signal": False,
+                    "signalMask": None,
+                    "view": obs["view"],
+                    "seat": obs["seat"],
+                    "synthetic": False,
+                    "events": np.asarray(page["events"]).reshape(-1, 768).tolist(),
+                    "hand": page["hand"],
+                    "entropy": 124999,
+                }
+            )
         for players in (2, 4):
             for target in (12, 24):
                 for flor in (False, True):
@@ -183,6 +222,7 @@ def torch_results(actor, cases):
                 result = actor.game_logits(
                     context.expand(len(actions), -1), actions, local
                 )
+                result = limit_opening_bluff(result, actions[:, 47] == -1)
             logits.append((result - result.max()).numpy())
             states.append(torch.cat(memory).numpy())
     return logits, states

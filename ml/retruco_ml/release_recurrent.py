@@ -11,6 +11,7 @@ import torch
 from .artifacts import digest
 from .bundle import runtime_sources
 from .mappo_export import export, load_actor
+from .recurrent import limit_opening_bluff
 from .team_play_probe import CHOICE_PROFILES, team_action
 
 
@@ -79,6 +80,11 @@ class BrowserActor:
                 raise ValueError("Artifact is not the exact checked checkpoint export")
         self.float_actor = model if fp32 else None
         self.native = ctypes.CDLL(str(Path(library).resolve()))
+        if self.profile == "value-and-team-v8" and (
+            not hasattr(self.native, "opening_bluff_version")
+            or self.native.opening_bluff_version() != 1
+        ):
+            raise ValueError("Missing bounded opening-bluff runtime")
         for name in (
             "model_ptr",
             "state_ptr",
@@ -152,6 +158,9 @@ class BrowserActor:
                 else:
                     raw = self.float_actor.game_logits(
                         context.expand(len(actions), -1), torch.from_numpy(actions)
+                    )
+                    raw = limit_opening_bluff(
+                        raw, torch.from_numpy(actions[:, 47] == -1)
                     )
                 logits = raw.detach().cpu().numpy().astype(np.float64)
         if not np.isfinite(logits).all():

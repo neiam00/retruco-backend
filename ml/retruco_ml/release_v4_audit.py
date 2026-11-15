@@ -29,7 +29,6 @@ from .release_v4_campaign import (
     fingerprint,
     load,
     response_checkpoint,
-    specifications,
 )
 from .statistics import interval, paired_loss
 
@@ -153,7 +152,7 @@ def evaluate_audit(root, project):
     m = load(root / "inputs/bundle/manifest.json")
     cp = conf["checkpoint_sha256"]
     model = conf["model_sha256"]
-    jobs = specifications()
+    jobs = conf["specifications"]
     reports = {}
     invalid = {}
     missing = []
@@ -315,11 +314,12 @@ def evaluate_audit(root, project):
     check("browser_performance", performance)
 
     def parity():
-        r = project / "ml/runs/reference-envido-v1"
+        r = project / "ml/runs" / conf.get("candidate_run", "reference-envido-v1")
         historical = load(r / "parity.json")
         web = load(base / "current-browser-parity.json")
         require(
             historical["checkpoint_sha256"] == cp
+            and historical.get("choice_policy") == conf["choice_policy"]
             and web["model_sha256"] == model
             and web["wasm_sha256"] == m["wasm_sha256"],
             "Parity identity mismatch",
@@ -574,6 +574,7 @@ def evaluate_audit(root, project):
         require(
             (h["checkpoint_sha256"], h["model_sha256"], h["wasm_sha256"])
             == (cp, model, m["wasm_sha256"])
+            and h.get("choice_policy") == conf["choice_policy"]
             and set(h["played_modes"]) == {"1v1", "2v2"}
             and h["reviewer"]
             and h["notes"]

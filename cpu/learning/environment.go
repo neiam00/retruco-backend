@@ -109,8 +109,9 @@ func (e *Environment) Observe() Observation {
 		kind = "signal"
 	}
 	v := rules.ViewFor(e.State, seat, false)
+	openingBluff := false
 	if kind == "game" && e.PlayingSeats[seat] {
-		v.Legal = cpu.ChoicesForProfile(v, seat, e.ChoicePolicy)
+		v.Legal, openingBluff = cpu.PolicyChoices(v, seat, e.ChoicePolicy)
 	}
 	signals, counts := e.signalContext(seat, e.Communication.For(seat), e.Communication.CountsFor(seat))
 	o := Observation{Version: Version, Seat: seat, Kind: kind, Winner: -1, Features: Encode(v, seat, Context{Cantos: e.Cantos, Signals: signals, CPU: e.CPU, Complete: true, SignalCounts: counts, SignalsComplete: e.Communication.Complete}), Legal: v.Legal, Actions: [][ActionSize]float32{}}
@@ -132,7 +133,7 @@ func (e *Environment) Observe() Observation {
 		return o
 	}
 	for _, c := range v.Legal {
-		o.Actions = append(o.Actions, EncodeAction(c))
+		o.Actions = append(o.Actions, PolicyAction(c, openingBluff))
 	}
 	decision := cpu.Decide(cpu.Request{Version: cpu.ProtocolVersion, Seat: seat, Entropy: 0, View: v})
 	if decision.Command != nil {

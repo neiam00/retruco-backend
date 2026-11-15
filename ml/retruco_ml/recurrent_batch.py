@@ -7,7 +7,7 @@ encodings are recomputed with current weights, never reused after an update.
 import numpy as np
 import torch
 
-from .recurrent import centered_categorical
+from .recurrent import centered_categorical, limit_opening_bluff
 
 
 class PackedRecords:
@@ -137,6 +137,11 @@ def candidate_distribution(actor, contexts, observations, candidates=None):
             )[rows]
         scores = actor.game_logits(contexts[rows], packed_candidates, features)
         logits[rows, columns] = scores
+        marked = packed_candidates[:, 47] == -1
+        if marked.any():
+            mask = torch.zeros_like(logits, dtype=torch.bool)
+            mask[rows, columns] = marked
+            logits[game_rows] = limit_opening_bluff(logits[game_rows], mask[game_rows])
     if signal_rows:
         signals = actor.signal_logits(contexts[signal_rows])
         masks = torch.tensor(

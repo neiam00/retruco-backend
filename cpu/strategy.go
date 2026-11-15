@@ -7,7 +7,8 @@ import (
 )
 
 // PlayingProfile identifies the CPU choices used in live games and paired evaluations.
-const PlayingProfile = "value-and-team-v7"
+const PlayingProfile = "value-and-team-v8"
+const ReferenceEnvidoProfile = "value-and-team-v7"
 const PartnershipProfile = "value-and-team-v6"
 const CompulsoryPericoProfile = "value-and-team-v5"
 const TeamStackProfile = "value-and-team-v4"
@@ -23,17 +24,29 @@ func PlayingChoices(v rules.View, seat int) []rules.Command {
 
 // ChoicesForProfile retains a reproducible baseline for old checkpoints and paired evaluations.
 func ChoicesForProfile(v rules.View, seat int, profile string) []rules.Command {
+	choices, _ := PolicyChoices(v, seat, profile)
+	return choices
+}
+
+// PolicyChoices also identifies an ordinarily filtered opening that the recurrent
+// policy may play at a bounded frequency. Human legal actions are independent.
+func PolicyChoices(v rules.View, seat int, profile string) ([]rules.Command, bool) {
 	n := v.Config.Players
 	if v.Phase != rules.Playing || (n != 2 && n != 4) || seat < 0 || seat >= n || v.Round < 0 || v.Round > 2 ||
 		v.Vira == nil || !v.Vira.Valid() || v.Holding == nil || len(v.Hand) != 3 || len(v.Seats) != n || len(v.Legal) < 2 {
-		return v.Legal
+		return v.Legal, false
 	}
-	partnershipProfile := profile == PartnershipProfile || profile == PlayingProfile
+	referenceEnvido := profile == PlayingProfile || profile == ReferenceEnvidoProfile
+	partnershipProfile := profile == PartnershipProfile || referenceEnvido
 	pericoProfile := profile == CompulsoryPericoProfile || partnershipProfile
 	teamProfile := profile == TeamStackProfile || pericoProfile
 	capRaiseAtTarget := profile == HeadsUpWagerProfile || teamProfile
-	e := wagerAssessment{view: v, seat: seat, priceOpening: n == 4 && profile == PlayingProfile, revised: profile == HeadsUpCardProfile || capRaiseAtTarget,
+	e := wagerAssessment{view: v, seat: seat, priceOpening: n == 4 && referenceEnvido, revised: profile == HeadsUpCardProfile || capRaiseAtTarget,
 		capRaiseAtTarget: capRaiseAtTarget, capTruco: teamProfile && (n == 4 || pericoProfile)}
+	e.headsUpDefense = n == 2 && profile == PlayingProfile
+	if e.headsUpDefense {
+		e.pegado = againstShownStack(v, seat)
+	}
 	pericoTop, lastEmptyLey := -1, false
 	if pericoProfile {
 		pericoTop = compulsoryPerico(v)
@@ -49,6 +62,9 @@ func ChoicesForProfile(v rules.View, seat int, profile string) []rules.Command {
 	discards := wastefulCards(v, seat)
 	choices := make([]rules.Command, 0, len(v.Legal))
 	for _, c := range v.Legal {
+		if e.pegado.dominated(c) {
+			continue
+		}
 		if e.revised && (!headsUpStack(v, seat, c) || emptyLey(v, c)) {
 			continue
 		}
@@ -72,12 +88,15 @@ func ChoicesForProfile(v rules.View, seat int, profile string) []rules.Command {
 		choices = e.partnershipChoices(choices)
 	}
 	if len(choices) == 0 || len(choices) == len(v.Legal) {
-		return v.Legal
+		return v.Legal, e.openingBluff && len(choices) != 0
 	}
-	return choices
+	return choices, e.openingBluff
 }
 
 type wagerAssessment struct {
+	headsUpDefense   bool
+	openingBluff     bool
+	pegado           stackOutcomes
 	capTruco         bool
 	capRaiseAtTarget bool
 	revised          bool
@@ -132,13 +151,35 @@ func (a *wagerAssessment) allows(c rules.Command) bool {
 			if winner, certain := publicTrucoWinner(v); certain {
 				return winner == a.seat%2
 			}
+			if a.headsUpDefense {
+				if a.pegado.total > 0 {
+					return 100*a.pegado.best >= 75*a.pegado.total
+				}
+				odds := a.estimate()
+				return odds.trucoKnown && odds.trucoWins*100 >= 70*dealSamples
+			}
 			odds := a.estimate()
 			return !odds.trucoKnown || odds.trucoWins*100 >= 60*dealSamples
 		}
+		if a.headsUpDefense && c.Kind == "decline" && v.Pending != nil && v.Pending.Value == 100 {
+			if v.Pending.Previous >= v.Config.Target-v.Scores[1-a.seat%2] ||
+				(a.pegado.total > 0 && a.pegado.best == a.pegado.total) {
+				return false
+			}
+		}
 		if c.Type == "call" || c.Kind == "raise" {
+			if a.pegado.total > 0 {
+				// A stack commits both rival cards. Calling again can invite an
+				// immediate match raise while its hidden bottom still decides the hand.
+				minimum := 65
+				if c.Amount >= 9 {
+					minimum = 80
+				}
+				return 100*a.pegado.best >= minimum*a.pegado.total
+			}
 			odds := a.estimate()
 			if !odds.trucoKnown {
-				return true
+				return !a.headsUpDefense
 			}
 			// Ordinary truco can still be a bluff. More expensive calls
 			// need progressively stronger cards at the table.
@@ -149,9 +190,21 @@ func (a *wagerAssessment) allows(c rules.Command) bool {
 			if c.Amount == 9 {
 				minimum = 75
 			}
-			return odds.trucoWins*100 >= minimum*dealSamples
+			if odds.trucoWins*100 >= minimum*dealSamples {
+				return true
+			}
+			if a.headsUpDefense && c == (rules.Command{Type: "call", Kind: "truco", Amount: 3}) &&
+				v.TrucoValue == 1 && v.Mano == a.seat && !v.FlorValid && headsUpLead(v, a.seat) &&
+				v.Config.Target-max(v.Scores[0], v.Scores[1]) > 3 {
+				a.openingBluff = true
+				return true
+			}
+			return false
 		}
 		if c.Kind == "accept" && v.Pending != nil {
+			if a.pegado.total > 0 {
+				return a.worthAccepting(a.pegado.best, a.pegado.total, v.Pending.Value, v.Pending.Previous)
+			}
 			odds := a.estimate()
 			return !odds.trucoKnown || a.worthAccepting(odds.trucoWins, dealSamples, v.Pending.Value, v.Pending.Previous)
 		}
