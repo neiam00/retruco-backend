@@ -64,11 +64,23 @@ def seat_returns(trajectory, reward, lam=0.95):
 
 
 def collect(
-    model, pool, population, rng, minimum, players=0, environments=64, monitor=None
+    model,
+    pool,
+    population,
+    rng,
+    minimum,
+    players=0,
+    environments=64,
+    monitor=None,
+    release_target=None,
 ):
     if not 1 <= environments <= 64:
         raise ValueError("environments must be in [1,64]")
     models = population.models(model)
+    if release_target is not None:
+        from .release_recurrent import SeatJournals
+
+        journals = SeatJournals(release_target)
     records = []
     matches = 0
     controller_counts = {}
@@ -97,6 +109,17 @@ def collect(
                     "roles": episode.roles,
                 }
             )
+            if release_target is not None:
+                fixed_seats = [
+                    s for s, c in enumerate(episode.controllers) if c == "release"
+                ]
+                if set(fixed_seats) != {
+                    s for s in range(count) if s % 2 != episode.learner % 2
+                }:
+                    raise ValueError(
+                        "Fresh best response must face the frozen release on every opposing seat"
+                    )
+                journals.reset(requests[-1], fixed_seats)
         observations = dict(enumerate(pool.call(requests)))
         trajectories = {identity: [] for identity in episodes}
         for _ in range(10000):
@@ -104,6 +127,8 @@ def collect(
                 monitor.check()
             if not observations:
                 break
+            if release_target is not None:
+                journals.consume(pool, observations)
             decisions, grouped = {}, {}
             for identity, observation in observations.items():
                 if observation["version"] != ENCODER_VERSION:
@@ -117,6 +142,8 @@ def collect(
                 )
                 if cut:
                     decisions[identity] = 0
+                elif controller == "release" and release_target is not None:
+                    decisions[identity] = journals.choose(identity, observation, rng)
                 elif controller.startswith("script:"):
                     decisions[identity] = scripted(
                         observation, controller.split(":")[1], rng
@@ -144,11 +171,22 @@ def collect(
                                     "seat",
                                 )
                             }
+                            if "signalMask" in obs:
+                                compact["signalMask"] = obs["signalMask"]
                             trajectories[identity].append(
                                 (compact, action, float(logp[row]), float(values[row]))
                             )
             requests = [
-                {"op": "step", "id": identity, "action": decisions[identity]}
+                {
+                    "op": "step",
+                    "id": identity,
+                    "action": decisions[identity],
+                    **(
+                        journals.parameters(identity)
+                        if release_target is not None
+                        else {}
+                    ),
+                }
                 for identity in observations
             ]
             updated = pool.call(requests)

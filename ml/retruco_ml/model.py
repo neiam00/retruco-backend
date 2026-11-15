@@ -41,6 +41,13 @@ class Policy(nn.Module):
             device
         )
         game, signal, value = self(state, action)
+        if observation["kind"] == "signal" and "signalMask" in observation:
+            limit = torch.as_tensor(
+                observation["signalMask"], dtype=torch.bool, device=device
+            )
+            if limit.shape != (6,) or not limit[0]:
+                raise ValueError("invalid truthful signal mask")
+            signal = signal.masked_fill(~limit, -torch.inf)
         return torch.distributions.Categorical(
             logits=(signal if observation["kind"] == "signal" else game)[0]
         ), value[0]
@@ -69,6 +76,18 @@ class PackedObservations:
         if self.states.shape != (len(observations), STATE_SIZE):
             raise ValueError("invalid state features")
         self.signals = np.asarray([o["kind"] == "signal" for o in observations])
+        self.signal_masks = None
+        if any("signalMask" in o for o in observations):
+            supplied = np.asarray(
+                [o.get("signalMask", [True] * 6) for o in observations]
+            )
+            if (
+                supplied.shape != (len(observations), 6)
+                or supplied.dtype != np.bool_
+                or not supplied[:, 0].all()
+            ):
+                raise ValueError("invalid truthful signal masks")
+            self.signal_masks = supplied
         self.actions = [
             np.asarray(o["actions"], dtype=np.float32).reshape(-1, ACTION_SIZE)
             for o in observations
@@ -98,6 +117,9 @@ class PackedObservations:
             device
         )
         signals = torch.from_numpy(self.signals[indices]).to(device)
+        if self.signal_masks is not None:
+            legal_signals = torch.from_numpy(self.signal_masks[indices]).to(device)
+            mask[:, :6] &= ~signals[:, None] | legal_signals
         states = torch.from_numpy(self.states[indices]).to(device)
         game, signal, value = model(states, torch.from_numpy(candidates).to(device))
         signal = torch.nn.functional.pad(signal, (0, maximum - 6))
