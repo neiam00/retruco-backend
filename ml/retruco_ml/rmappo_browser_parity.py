@@ -34,6 +34,7 @@ def collect_cases(actor, executable, choice_policy=None):
             "value-and-team-v8",
             "value-and-team-v9",
             "value-and-team-v10",
+            "value-and-team-v11",
         ):
             obs = simulator.call(
                 [
@@ -49,6 +50,37 @@ def collect_cases(actor, executable, choice_policy=None):
                     }
                 ]
             )[0]
+            if choice_policy == "value-and-team-v11":
+                if (obs["actions"][:, 47] == -1).any() or any(
+                    c["type"] == "call"
+                    and c.get("kind") == "truco"
+                    and c.get("amount") == 3
+                    for c in obs["legal"]
+                ):
+                    raise ValueError("The zero-cover opening passed the v11 filter")
+                # This ordinary development deal retains a bounded opening. Test
+                # its real legal actions and journal in each numerical runtime.
+                cut = simulator.call(
+                    [
+                        {
+                            **options,
+                            "op": "reset",
+                            "training": True,
+                            "truthfulCPU": True,
+                            "id": 0,
+                            "seed": 378034,
+                            "roles": [True] * 4,
+                            "config": {
+                                "players": 2,
+                                "target": 12,
+                                "florRequired": True,
+                            },
+                        }
+                    ]
+                )[0]
+                if cut["legal"][0]["type"] != "cut":
+                    raise ValueError("Expected a fresh hand before the parity opening")
+                obs = simulator.call([{"op": "step", "id": 0, "action": 0}])[0]
             page = obs["training"]["memory"]
             if (
                 page["start"] != 0

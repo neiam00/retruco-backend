@@ -17,8 +17,10 @@ func TestHeadsUpOpeningBluffIsAnOrdinaryAffordableTruco(t *testing.T) {
 	allIn := rules.Command{Type: "call", Kind: "truco", Amount: 100}
 	v.Legal = append(v.Legal, bid, envido, allIn)
 	assert.NotContains(t, cpu.ChoicesForProfile(v, 0, "value-and-team-v7"), bid)
+	assert.Contains(t, cpu.ChoicesForProfile(v, 0, cpu.HeadsUpEnvidoProfile), bid)
 	choices := cpu.PlayingChoices(v, 0)
-	assert.Contains(t, choices, bid)
+	assert.NotContains(t, choices, bid, "fold equity alone does not cover losing three on this hand")
+	assert.Contains(t, v.Legal, bid)
 	assert.NotContains(t, choices, envido)
 	assert.NotContains(t, choices, allIn)
 	v.Scores[0] = 2
@@ -59,4 +61,18 @@ func TestHeadsUpEnvidoAtMatchPoint(t *testing.T) {
 	decline := rules.Command{Type: "respond", Kind: "decline"}
 	v.Legal = []rules.Command{decline, accept, {Type: "respond", Kind: "raise", Amount: 2}, {Type: "respond", Kind: "falta"}}
 	require.Equal(t, []rules.Command{accept}, cpu.PlayingChoices(v, 0), "take the two points on offer with a strong pair")
+}
+
+func TestSelectiveWeakOpeningStillUsesTheProbabilityCap(t *testing.T) {
+	v := tableWithVira(t, 2, 0, [3]rules.Card{{Suit: rules.Coins, Number: 6}, {Suit: rules.Cups, Number: 4}, {Suit: rules.Cups, Number: 10}}, rules.Card{Suit: rules.Cups, Number: 3})
+	v.Config.Target = 12
+	bid := rules.Command{Type: "call", Kind: "truco", Amount: 3}
+	v.Legal = append(v.Legal, bid)
+	choices, bounded := cpu.PolicyChoices(v, 0, cpu.PlayingProfile)
+	require.Contains(t, choices, bid)
+	require.True(t, bounded, "a retained weak opening must be probability limited")
+	v.Scores[0] = 1
+	choices, bounded = cpu.PolicyChoices(v, 0, cpu.PlayingProfile)
+	require.NotContains(t, choices, bid)
+	require.False(t, bounded)
 }

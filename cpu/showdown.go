@@ -11,6 +11,7 @@ import (
 const dealSamples = 192
 
 type showdownOdds struct {
+	opening                                                      openingOutcomes
 	envidoDeals, ordinaryDeals, contestedDeals                   int
 	ordinaryWins, leyWins, leyOpeningWins, florWins, allFlorWins int
 	trucoWins, openingValue                                      int
@@ -101,7 +102,7 @@ func headsUpLead(v rules.View, seat int) bool {
 	return true
 }
 
-func sampleShowdowns(v rules.View, seat int, revised, priceOpening, priceHeadsUp bool) showdownOdds {
+func sampleShowdowns(v rules.View, seat int, revised, priceOpening, priceHeadsUp, priceMatch bool) showdownOdds {
 	d, ok := dealFromView(v, seat)
 	if !ok {
 		return showdownOdds{}
@@ -137,6 +138,10 @@ func sampleShowdowns(v rules.View, seat int, revised, priceOpening, priceHeadsUp
 		}
 	}
 	odds := showdownOdds{envidoKnown: needEnvido, trucoKnown: d.ordinaryTricks && needTricks, cardKnown: planCards}
+	measureOpening := priceMatch && n == 2 && v.TrucoValue == 1 && v.Pending == nil && v.Mano == seat && headsUpLead(v, seat) && d.known[1-seat] == 0
+	if measureOpening {
+		odds.opening.setWeights(d, *v.Vira)
+	}
 	var declared [4]bool
 	if priceOpening && needEnvido {
 		for _, player := range v.Seats {
@@ -277,8 +282,14 @@ func sampleShowdowns(v rules.View, seat int, revised, priceOpening, priceHeadsUp
 				}
 			}
 		}
-		if odds.trucoKnown && playShowdown(d.plays, ranks, n, v.Mano) == team {
-			odds.trucoWins++
+		if odds.trucoKnown {
+			won := playShowdown(d.plays, ranks, n, v.Mano) == team
+			if measureOpening {
+				odds.opening.record(ranks[1-seat], won)
+			}
+			if won {
+				odds.trucoWins++
+			}
 		}
 	}
 	return odds
