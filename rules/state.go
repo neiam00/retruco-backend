@@ -185,6 +185,12 @@ func (s *State) RestoreActiveHand(invalidOrdinaryOpening bool) {
 		s.resumeTruco()
 		changed = true
 	}
+	// Older saves could leave an accepted privo at one point or awaiting a truco raise.
+	if s.Envido.Kind == "privo" && s.EnvidoAccepted &&
+		(s.TrucoValue != privoTrucoValue || s.TrucoVoice != -1 || s.Pending != nil) {
+		s.acceptPrivo()
+		changed = true
+	}
 	if s.Round == 1 && s.MandatoryStack {
 		if winner := s.roundWinner(0); winner >= 0 {
 			s.MandatoryStack = false

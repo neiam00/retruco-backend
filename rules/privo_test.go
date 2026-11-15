@@ -54,7 +54,16 @@ func TestPrivoAnnouncesOnlyTeamMaximumAndLocksBettingBeforePlay(t *testing.T) {
 		}
 		accepted := apply(t, state, 3, rules.Command{Type: "respond", Kind: "accept"})
 		assert.Nil(t, accepted.Pending)
-		assert.Equal(t, 1, accepted.TrucoValue, "Privo y Truco does not itself raise truco")
+		view := rules.ViewFor(accepted, accepted.Turn, false)
+		assert.Equal(t, 3, view.TrucoValue)
+		for _, amount := range []int{0, 3, 6, 9, 100} {
+			call := rules.Command{Type: "call", Kind: "truco", Amount: amount}
+			assert.NotContains(t, view.Legal, call)
+			rejected, events, err := rules.Apply(accepted, accepted.Turn, call)
+			require.Error(t, err)
+			assert.Empty(t, events)
+			assert.Equal(t, accepted, rejected)
+		}
 		assert.True(t, accepted.EnvidoAccepted)
 		for _, kind := range []string{"envido", "ley_envido", "flor"} {
 			_, _, err := rules.Apply(accepted, accepted.Turn, rules.Command{Type: "call", Kind: kind})
@@ -89,14 +98,30 @@ func TestPrivoRefusalAndTimeoutEndMatchImmediately(t *testing.T) {
 	}
 }
 
+func TestPrivoPaysTwoForEnvidoAndThreeForWinningTheTricks(t *testing.T) {
+	state := privoHand(t, 24, [2]int{13, 23}, false,
+		[3]rules.Card{{rules.Coins, 7}, {rules.Coins, 6}, {rules.Spades, 1}},
+		[3]rules.Card{{rules.Clubs, 4}, {rules.Clubs, 5}, {rules.Cups, 2}},
+	)
+	state = apply(t, state, 0, rules.Command{Type: "respond", Kind: "accept"})
+	state = apply(t, state, 1, rules.Command{Type: "play", Card: 0})
+	state = apply(t, state, 0, rules.Command{Type: "play", Card: 1})
+	state = apply(t, state, 0, rules.Command{Type: "play", Card: 2})
+	state = apply(t, state, 1, rules.Command{Type: "play", Card: 2})
+	require.Equal(t, rules.HandOver, state.Phase)
+	require.NotNil(t, state.LastHand)
+	assert.Equal(t, []rules.Payout{{Kind: "envido", Team: 0, Points: 2}, {Kind: "truco", Team: 0, Points: 3}}, state.LastHand.Payouts)
+	assert.Equal(t, [2]int{13, 23}, state.LastHand.ScoresBefore)
+	assert.Equal(t, [2]int{18, 23}, state.LastHand.ScoresAfter)
+	assert.Equal(t, state.LastHand.ScoresAfter, state.Scores)
+}
+
 func TestPrivoEnvidoWinsBeforeOpponentsThreePointTruco(t *testing.T) {
 	state := privoHand(t, 24, [2]int{23, 20}, false,
 		[3]rules.Card{{rules.Clubs, 7}, {rules.Clubs, 6}, {rules.Coins, 2}},
 		[3]rules.Card{{rules.Spades, 1}, {rules.Cups, 7}, {rules.Cups, 3}},
 	)
 	state = apply(t, state, 1, rules.Command{Type: "respond", Kind: "accept"})
-	state = apply(t, state, 1, rules.Command{Type: "call", Kind: "truco"})
-	state = apply(t, state, 0, rules.Command{Type: "respond", Kind: "accept"})
 	state = apply(t, state, 1, rules.Command{Type: "play", Card: 0})
 	state = apply(t, state, 0, rules.Command{Type: "play", Card: 0})
 	state = apply(t, state, 1, rules.Command{Type: "play", Card: 2})
@@ -108,7 +133,7 @@ func TestPrivoEnvidoWinsBeforeOpponentsThreePointTruco(t *testing.T) {
 }
 
 func TestPrivoFlorOutcomesAndRetainedFlor(t *testing.T) {
-	plain := [3]rules.Card{{rules.Clubs, 1}, {rules.Clubs, 6}, {rules.Coins, 2}}
+	plain := [3]rules.Card{{rules.Clubs, 4}, {rules.Clubs, 5}, {rules.Coins, 2}}
 	flor := [3]rules.Card{{rules.Cups, 7}, {rules.Cups, 6}, {rules.Cups, 5}}
 	for _, required := range []bool{false, true} {
 		state := privoHand(t, 24, [2]int{23, 20}, required, plain, flor)
@@ -122,12 +147,14 @@ func TestPrivoFlorOutcomesAndRetainedFlor(t *testing.T) {
 		state.Scores[1] = 0
 		state = apply(t, state, 1, rules.Command{Type: "respond", Kind: "accept"})
 		assert.True(t, state.Players[1].FlorValid, "playing instead preserves flor")
-		state = apply(t, state, 1, rules.Command{Type: "call", Kind: "truco", Declaration: "con_mi_flor"})
-		state = apply(t, state, 0, rules.Command{Type: "respond", Kind: "decline"})
+		state = apply(t, state, 1, rules.Command{Type: "play", Card: 0, Declaration: "flor"})
+		state = apply(t, state, 0, rules.Command{Type: "play", Card: 1})
+		state = apply(t, state, 1, rules.Command{Type: "play", Card: 1, Declaration: "flor"})
+		state = apply(t, state, 0, rules.Command{Type: "play", Card: 0})
 		assert.Equal(t, []rules.Payout{
 			{Kind: "envido", Team: 1, Points: 2},
 			{Kind: "flor", Team: 1, Points: 3},
-			{Kind: "truco", Team: 1, Points: 1},
+			{Kind: "truco", Team: 1, Points: 3},
 		}, state.Payouts)
 		assert.Equal(t, rules.HandOver, state.Phase)
 	}
@@ -148,8 +175,13 @@ func TestBothTeamsPrivandoUseManoForTiesAndFlorPriority(t *testing.T) {
 	assert.Equal(t, []rules.PrivoEnvido{{Team: 0, Value: 33}, {Team: 1, Value: 33}}, rules.ViewFor(state, -1, true).PrivoEnvido)
 	assert.True(t, state.EnvidoAccepted)
 	assert.Nil(t, state.Pending)
-	state = apply(t, state, 1, rules.Command{Type: "call", Kind: "truco"})
-	state = apply(t, state, 0, rules.Command{Type: "respond", Kind: "decline"})
+	assert.Equal(t, 3, state.TrucoValue)
+	_, _, err := rules.Apply(state, state.Turn, rules.Command{Type: "call", Kind: "truco", Amount: 6})
+	assert.Error(t, err)
+	state = apply(t, state, 1, rules.Command{Type: "play", Card: 0})
+	state = apply(t, state, 0, rules.Command{Type: "play", Card: 0})
+	state = apply(t, state, 0, rules.Command{Type: "play", Card: 1})
+	state = apply(t, state, 1, rules.Command{Type: "play", Card: 1})
 	assert.Equal(t, 1, state.Winner)
 	assert.Equal(t, []rules.Payout{{Kind: "envido", Team: 1, Points: 2}}, state.Payouts)
 
@@ -169,8 +201,10 @@ func TestPrivoEnvidoCanEndMatchBeforeRetainedOpposingFlor(t *testing.T) {
 	)
 	state = apply(t, state, 1, rules.Command{Type: "respond", Kind: "accept"})
 	assert.True(t, state.Players[1].FlorValid)
-	state = apply(t, state, 1, rules.Command{Type: "call", Kind: "truco", Declaration: "con_mi_flor"})
-	state = apply(t, state, 0, rules.Command{Type: "respond", Kind: "decline"})
+	state = apply(t, state, 1, rules.Command{Type: "play", Card: 0, Declaration: "flor"})
+	state = apply(t, state, 0, rules.Command{Type: "play", Card: 0})
+	state = apply(t, state, 0, rules.Command{Type: "play", Card: 1})
+	state = apply(t, state, 1, rules.Command{Type: "play", Card: 1, Declaration: "flor"})
 	assert.Equal(t, 0, state.Winner)
 	assert.Equal(t, 10, state.Scores[1])
 	assert.Equal(t, []rules.Payout{{Kind: "envido", Team: 0, Points: 2}}, state.Payouts)
@@ -216,4 +250,38 @@ func TestPrivoActivatesOnDealOnlyAndNextHandResetsNegotiation(t *testing.T) {
 	assert.Empty(t, next.Envido.Kind)
 	next = apply(t, next, next.Turn, rules.Command{Type: "cut", Cut: 1})
 	assert.True(t, next.Privando[0])
+}
+
+func TestRestoreAcceptedPrivoDiscardsOldTrucoNegotiations(t *testing.T) {
+	state := privoHand(t, 24, [2]int{23, 13}, false,
+		[3]rules.Card{{rules.Clubs, 4}, {rules.Clubs, 5}, {rules.Coins, 2}},
+		[3]rules.Card{{rules.Cups, 7}, {rules.Cups, 6}, {rules.Spades, 1}},
+	)
+	state = apply(t, state, 1, rules.Command{Type: "respond", Kind: "accept"})
+	state = apply(t, state, 1, rules.Command{Type: "play", Card: 0})
+	for _, saved := range []struct {
+		name    string
+		value   int
+		voice   int
+		pending *rules.Wager
+	}{
+		{"one point after privo acceptance", 1, -1, nil},
+		{"ordinary truco awaiting a reply", 1, -1, &rules.Wager{Kind: "truco", Caller: 0, Value: 3, Previous: 1}},
+		{"accepted retruco", 6, 1, nil},
+	} {
+		t.Run(saved.name, func(t *testing.T) {
+			restored := state
+			restored.TrucoValue, restored.TrucoVoice, restored.Pending = saved.value, saved.voice, saved.pending
+			restored.RestoreActiveHand(false)
+			assert.Equal(t, 3, restored.TrucoValue)
+			assert.Equal(t, -1, restored.TrucoVoice)
+			assert.Nil(t, restored.Pending)
+			assert.Equal(t, state.Revision+1, restored.Revision)
+			assert.Equal(t, state.Players, restored.Players)
+			assert.Equal(t, state.Scores, restored.Scores)
+			assert.Equal(t, state.Turn, restored.Turn)
+			restored.RestoreActiveHand(false)
+			assert.Equal(t, state.Revision+1, restored.Revision)
+		})
+	}
 }

@@ -15,6 +15,9 @@ func (s *State) call(seat int, c Command) error {
 		return fmt.Errorf("canto requires your turn")
 	}
 	if c.Kind == "truco" {
+		if s.Envido.Kind == "privo" {
+			return fmt.Errorf("truco is fixed at three points during privo")
+		}
 		if c.Mode != "" {
 			return fmt.Errorf("truco has no ley mode")
 		}

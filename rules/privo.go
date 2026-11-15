@@ -2,6 +2,8 @@ package rules
 
 import "fmt"
 
+const privoTrucoValue = 3
+
 // PrivoEnvido is a team's truthful announcement, without identifying which
 // teammate holds it or disclosing either player's cards.
 type PrivoEnvido struct {
@@ -50,11 +52,18 @@ func (s *State) beginPrivo() {
 	s.Envido = Wager{Kind: "privo", Caller: caller, Value: 2, Previous: 1, Terminal: true}
 	s.EnvidoClosed = true
 	if s.Privando[0] && s.Privando[1] {
-		s.EnvidoAccepted = true
+		s.acceptPrivo()
 		return
 	}
 	wager := s.Envido
 	s.Pending = &wager
+}
+
+// Playing privo accepts both the fixed envido and the three-point truco.
+func (s *State) acceptPrivo() {
+	s.EnvidoAccepted = true
+	s.TrucoValue, s.TrucoVoice = privoTrucoValue, -1
+	s.Pending = nil
 }
 
 func (s *State) respondPrivo(seat int, command Command) error {
@@ -66,8 +75,7 @@ func (s *State) respondPrivo(seat int, command Command) error {
 	case "accept":
 		// Accepting privo does not burn an ordinary flor. Its later card
 		// declarations still follow the room's normal flor rules.
-		s.EnvidoAccepted = true
-		s.Pending = nil
+		s.acceptPrivo()
 	case "decline":
 		s.EnvidoWinner = s.Pending.Caller
 		s.Envido.Value = 1
