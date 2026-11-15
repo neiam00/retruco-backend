@@ -1,0 +1,210 @@
+{
+  "version": 3,
+  "steps": 8192,
+  "workers": 8,
+  "environments": 32,
+  "batch_size": 64,
+  "calibration_choices": 2048,
+  "warmup_max": 4,
+  "memory_gib": 8,
+  "evaluation_workers": 4,
+  "actor_memory": 64,
+  "heldout_parent": 103,
+  "critic_hidden": [
+    256,
+    128
+  ],
+  "league_interval": 50000,
+  "parent_anchor": 0.01,
+  "response_anchor": 0.1,
+  "signal_anchor": 0.05,
+  "primary_specs": [
+    {
+      "id": "native-headsup",
+      "opponent": "native",
+      "partner": "reference-cpu",
+      "players": 2
+    },
+    {
+      "id": "native-literal-v2",
+      "opponent": "native",
+      "partner": "literal-v2",
+      "players": 4
+    },
+    {
+      "id": "native-trusting-v2",
+      "opponent": "native",
+      "partner": "trusting-v2",
+      "players": 4
+    },
+    {
+      "id": "native-cautious-v2",
+      "opponent": "native",
+      "partner": "cautious-v2",
+      "players": 4
+    },
+    {
+      "id": "native-reference-human",
+      "opponent": "native",
+      "partner": "reference-human",
+      "players": 4
+    }
+  ],
+  "diagnostic_specs": [
+    {
+      "id": "parent-headsup",
+      "opponent": "parent",
+      "partner": "reference-cpu",
+      "players": 2
+    },
+    {
+      "id": "parent-literal-v2",
+      "opponent": "parent",
+      "partner": "literal-v2",
+      "players": 4
+    },
+    {
+      "id": "parent-reference-human",
+      "opponent": "parent",
+      "partner": "reference-human",
+      "players": 4
+    },
+    {
+      "id": "native-independent-partner",
+      "opponent": "native",
+      "partner": "independent-partner",
+      "players": 4
+    },
+    {
+      "id": "parent-independent-partner",
+      "opponent": "parent",
+      "partner": "independent-partner",
+      "players": 4
+    },
+    {
+      "id": "resistant-literal-v2",
+      "opponent": "resistant",
+      "partner": "literal-v2",
+      "players": 4
+    },
+    {
+      "id": "native-literal-v3",
+      "opponent": "native",
+      "partner": "literal-v3",
+      "players": 4
+    },
+    {
+      "id": "native-trusting-v3",
+      "opponent": "native",
+      "partner": "trusting-v3",
+      "players": 4
+    },
+    {
+      "id": "native-cautious-v3",
+      "opponent": "native",
+      "partner": "cautious-v3",
+      "players": 4
+    }
+  ],
+  "mode_win_rate_targets": {
+    "1v1": 0.7,
+    "2v2": 0.6
+  },
+  "max_wall_hours": 12,
+  "recipes": {
+    "RESIDUAL": {
+      "team_adapter": "residual",
+      "partner_pool": false
+    },
+    "CONTEXTUAL": {
+      "team_adapter": "contextual",
+      "partner_pool": false
+    }
+  },
+  "discovery_seeds": [
+    901,
+    902,
+    903
+  ],
+  "confirmation_seeds": [
+    1001,
+    1002,
+    1003
+  ],
+  "discovery_choices": 250000,
+  "confirmation_checkpoints": [
+    500000,
+    1000000,
+    2000000
+  ],
+  "headsup_fraction": 0.0,
+  "discovery_pairs": 64,
+  "discovery_seed": 177000,
+  "diagnostic_pairs": 32,
+  "diagnostic_seed": 178000,
+  "selection_pairs": 64,
+  "selection_seed": 179000,
+  "final_pairs": 256,
+  "final_seed": 184000,
+  "ablation_pairs": 64,
+  "ablation_seed": 185000,
+  "signal_policy": "truthful-cpu-v1",
+  "reward": "terminal match win +1 / loss -1 only",
+  "starter": "Exact stronger legacy champion widened64 with zero recurrent projection; base state/action/score/signal tensors frozen; optimizer updates restricted to team memory/projection/residual.",
+  "training_opponents": "50% native, 42.5% historical league, 7.5% inherited population; D103 reserved",
+  "selection": "Same70/60 native targets and full regression guards. Team-only training, never weaken the benchmark. Match1v1 reports to baseline exactly as an architecture invariant. All reported synthetic partners are development evidence.",
+  "scope": "2v2-only specialist with frozen base policy and zero-initialized team residual. Compare residual-only vs authorized card/trick contextual features at equal capacity. Preserve original1v1 policy exactly by architecture; no browser deployment until new layers are implemented and verified.",
+  "trainer_controls": {
+    "native_fraction": 0.5,
+    "gae_lambda": 0.99,
+    "entropy_coef": 0.01,
+    "sequence_length": 32,
+    "ppo_epochs": 4,
+    "target_kl": 0.015,
+    "clip_range": 0.2,
+    "actor_learning_rate": 0.0001,
+    "critic_learning_rate": 0.0001,
+    "actor_max_grad_norm": 0.5,
+    "critic_max_grad_norm": 0.5,
+    "extra_critic_epochs": 0,
+    "response_kl_target": 0.02,
+    "response_kl_stop": 0.03,
+    "response_kl_rollback": 0.05,
+    "response_min_choices": 32,
+    "league_anchor_fraction": 0.0,
+    "partner_policy_version": 3,
+    "team_adapter": "residual"
+  },
+  "factorial_contrasts": {
+    "authorized_action_context": {
+      "CONTEXTUAL": 1,
+      "RESIDUAL": -1
+    }
+  },
+  "partner_pool_source": "../runs/pretraining-partners-v1/manifest.json",
+  "reserved_partner_sha256": [
+    "f70958ad56e0a7f2a7adc264c536e664189019bc626a5d9988e82b64432f5b88",
+    "20315d6dc5382a9df10e932b66e1148510bf9e8ab6c37640c5877bb6101c2ee2",
+    "5b245bd42df6715673408aaad93840f477ffeaffb7ade480f288256e36fb3d0e",
+    "a09301dba4ad9aa787ceb80cc2e784c5945ce82451b48f9a2732525ab8b9ff88",
+    "26796a9926a62f4ebe40c5ac00b0be5faadc9c71109f6b09550a4f999f854482",
+    "113d1a725e3aa0984826eec0981ec685a53387d028d91b812564180d3878bad5",
+    "6d2458c148f40abca92ec9e0a0b277442705dd46cb2e526a6689e01ed68776eb"
+  ],
+  "reserved_partner_fingerprints": [
+    "cb9c86b774621a119adf39d569deab2af251c1c653091d45d3b09d7b8a45ae3d",
+    "4adce1a046d6376ce9112b3e9b1e5e75d512d0bdaa6e2798eb88520850a6d296",
+    "500c59903c06e38bd2ced22a77d16608ea13616a2562ff66c1bee4983cb5fa0b",
+    "495910bf3465c54632371a36c78c59496309faa22462bd926e39503cf3c104ea",
+    "4c520605065c16650f46a7124be1dd4d0d5edcc9d4f27630f2d0bcc720f1f7ae",
+    "102e16f75187de6df4c3b10f8a16f2d958ff71b9376fc1bef242a33fafbadc84",
+    "a247485f52de81ac142fe761eb58b3ef73fd482ef0e5e3fe7f29d473d8ec3187"
+  ],
+  "ablation_modes": [
+    "normal",
+    "no-send",
+    "no-receive",
+    "no-partner-delivery"
+  ],
+  "validation_reserve_hours": 2
+}

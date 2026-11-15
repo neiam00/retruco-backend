@@ -1,0 +1,129 @@
+{
+  "primary_specs": [
+    {
+      "id": "native-headsup",
+      "opponent": "native",
+      "partner": "reference-cpu",
+      "players": 2
+    },
+    {
+      "id": "native-literal-v2",
+      "opponent": "native",
+      "partner": "literal-v2",
+      "players": 4
+    },
+    {
+      "id": "native-trusting-v2",
+      "opponent": "native",
+      "partner": "trusting-v2",
+      "players": 4
+    },
+    {
+      "id": "native-cautious-v2",
+      "opponent": "native",
+      "partner": "cautious-v2",
+      "players": 4
+    },
+    {
+      "id": "native-reference-human",
+      "opponent": "native",
+      "partner": "reference-human",
+      "players": 4
+    }
+  ],
+  "diagnostic_specs": [
+    {
+      "id": "parent-headsup",
+      "opponent": "parent",
+      "partner": "reference-cpu",
+      "players": 2
+    },
+    {
+      "id": "parent-literal-v2",
+      "opponent": "parent",
+      "partner": "literal-v2",
+      "players": 4
+    },
+    {
+      "id": "parent-reference-human",
+      "opponent": "parent",
+      "partner": "reference-human",
+      "players": 4
+    },
+    {
+      "id": "native-independent-partner",
+      "opponent": "native",
+      "partner": "independent-partner",
+      "players": 4
+    },
+    {
+      "id": "parent-independent-partner",
+      "opponent": "parent",
+      "partner": "independent-partner",
+      "players": 4
+    },
+    {
+      "id": "resistant-literal-v2",
+      "opponent": "resistant",
+      "partner": "literal-v2",
+      "players": 4
+    },
+    {
+      "id": "native-literal-v3",
+      "opponent": "native",
+      "partner": "literal-v3",
+      "players": 4
+    },
+    {
+      "id": "native-trusting-v3",
+      "opponent": "native",
+      "partner": "trusting-v3",
+      "players": 4
+    },
+    {
+      "id": "native-cautious-v3",
+      "opponent": "native",
+      "partner": "cautious-v3",
+      "players": 4
+    }
+  ],
+  "version": 1,
+  "cells": [
+    "gru",
+    "lstm"
+  ],
+  "seeds": [
+    1101,
+    1102,
+    1103
+  ],
+  "rounds": [
+    250000,
+    500000,
+    1000000,
+    2000000
+  ],
+  "max_wall_hours": 12,
+  "evaluation_reserve_hours": 4,
+  "steps": 8192,
+  "environments": 32,
+  "workers": 8,
+  "batch_size": 512,
+  "warmups": 2,
+  "warmup_choices": 2048,
+  "evaluation_workers": 4,
+  "selection_pairs": 64,
+  "selection_seed": 146000,
+  "final_pairs": 256,
+  "final_seed": 147000,
+  "ablation_pairs": 64,
+  "ablation_seed": 148000,
+  "mode_win_rate_targets": {
+    "1v1": 0.7,
+    "2v2": 0.6
+  },
+  "initialization": "all actors and recurrent centralized critics random; fresh optimizers; prior checkpoints opponents/reference only",
+  "population": "40% heads-up; 25% full joint self-play, otherwise fixed opposition: 50% native, 40% historical, 10% old D101/D102. In remaining 2v2 games: 50% joint teammate, 35% contextual-v3 human-role, 10% reference-human, 5% frozen CPU.",
+  "reward": "terminal match team +1/-1; truthful signals and silence legal",
+  "smoke": false
+}

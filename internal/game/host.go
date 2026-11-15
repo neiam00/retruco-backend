@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/neiam00/retruco-backend/cpu/learning"
 	"github.com/neiam00/retruco-backend/internal/store"
 	"github.com/neiam00/retruco-backend/rules"
 )
@@ -58,28 +59,34 @@ type RoomOptions struct {
 }
 
 type Match struct {
-	CreatorID     string
-	CreatorName   string
-	Options       RoomOptions
-	Code          string
-	RecordCode    string `json:",omitempty"`
-	GameNumber    int
-	RematchVotes  []int
-	Private       bool
-	Config        rules.Config
-	Seats         []Seat
-	State         *rules.State
-	Deadline      time.Time
-	Chat          []Chat
-	Sequence      uint64
-	Recent        map[string]uint64
-	Signals       []Signal `json:"-"`
-	LastActivity  time.Time
-	Expired       bool
-	Events        []GameEvent
-	CantoHistory  []GameEvent
-	chatRevision  *historyRevision
-	cantoRevision *historyRevision
+	CreatorID          string
+	CreatorName        string
+	Options            RoomOptions
+	Code               string
+	RecordCode         string `json:",omitempty"`
+	GameNumber         int
+	RematchVotes       []int
+	Private            bool
+	Config             rules.Config
+	Seats              []Seat
+	State              *rules.State
+	Deadline           time.Time
+	Chat               []Chat
+	Sequence           uint64
+	Recent             map[string]uint64
+	Signals            []Signal `json:"-"`
+	StoredSignals      []persistedSignal
+	CPUCommunication   learning.Communication
+	CPUHistoryComplete bool
+	CPUMemoryVersion   int
+	CPUMemory          learning.MemoryJournal
+	CPUVisibleSignals  [4][]learning.Signal
+	LastActivity       time.Time
+	Expired            bool
+	Events             []GameEvent
+	CantoHistory       []GameEvent
+	chatRevision       *historyRevision
+	cantoRevision      *historyRevision
 }
 
 type Snapshot struct {
@@ -161,7 +168,13 @@ func (h *Host) Restore(ctx context.Context) error {
 				}
 			}
 		}
+		for _, stored := range match.StoredSignals {
+			signal := stored.Value
+			signal.Visible = stored.Visibility
+			match.Signals = append(match.Signals, signal)
+		}
 		match.restoreFlorDeclarations()
+		match.restoreCPUMemory()
 		r := newRoom(&match)
 		if match.State != nil && activeMatch(&match) {
 			// Wait for a seated human before restarting any card/canto clock.
@@ -361,6 +374,12 @@ func clone(m *Match) *Match {
 	next.Options.CPUSeats = append([]int(nil), m.Options.CPUSeats...)
 	next.Seats = append([]Seat{}, m.Seats...)
 	next.Signals = append([]Signal{}, m.Signals...)
+	next.StoredSignals = append([]persistedSignal(nil), m.StoredSignals...)
+	next.CPUCommunication.Signals = append([]learning.DeliveredSignal(nil), m.CPUCommunication.Signals...)
+	next.CPUMemory = m.CPUMemory.Clone()
+	for seat := range m.CPUVisibleSignals {
+		next.CPUVisibleSignals[seat] = append([]learning.Signal(nil), m.CPUVisibleSignals[seat]...)
+	}
 	// Retained histories are immutable and copied only by their mutators.
 	next.Recent = make(map[string]uint64, len(m.Recent))
 	for key, value := range m.Recent {
@@ -371,6 +390,7 @@ func clone(m *Match) *Match {
 
 func (h *Host) commit(ctx context.Context, r *room, next *Match) error {
 	previous := r.match
+	next.captureCPUMemory(-1)
 	next.LastActivity = time.Now()
 	create := recordCode(previous) != recordCode(next)
 	members := addedHumanMembers(previous, next)
@@ -519,12 +539,16 @@ func (h *Host) List() []Listing {
 }
 
 type Input struct {
-	CPUSeat  *int          `json:"cpuSeat,omitempty"`
-	ID       string        `json:"id"`
-	Revision uint64        `json:"revision"`
-	Command  rules.Command `json:"command"`
-	Chat     string        `json:"chat,omitempty"`
-	Signal   string        `json:"signal,omitempty"`
+	CPUSeat      *int          `json:"cpuSeat,omitempty"`
+	CPUKind      string        `json:"cpuKind,omitempty"`
+	CPUToken     string        `json:"cpuToken,omitempty"`
+	ID           string        `json:"id"`
+	Revision     uint64        `json:"revision"`
+	Command      rules.Command `json:"command"`
+	Chat         string        `json:"chat,omitempty"`
+	Signal       string        `json:"signal,omitempty"`
+	MemoryHand   *int          `json:"memoryHand,omitempty"`
+	MemoryCursor *int          `json:"memoryCursor,omitempty"`
 }
 
 func (h *Host) Handle(ctx context.Context, code string, user store.User, input Input) error {
@@ -544,6 +568,9 @@ func (h *Host) HandleFromConnection(ctx context.Context, code string, user store
 	defer r.mu.Unlock()
 	m := r.match
 	seat := seatOf(m, user.ID)
+	if h.Updating() && input.CPUSeat != nil {
+		return fmt.Errorf("la partida está en pausa")
+	}
 	if h.Updating() && input.Chat == "" && input.Signal == "" && input.Command.Type != "leave" {
 		return fmt.Errorf("la partida está en pausa mientras actualizamos el juego")
 	}
@@ -552,10 +579,13 @@ func (h *Host) HandleFromConnection(ctx context.Context, code string, user store
 		connection := r.connections[connectionID]
 		if connectionID == "" || r.controller != connectionID || connection.userID != user.ID ||
 			cpuSeat < 0 || cpuSeat >= len(m.Seats) || !m.Seats[cpuSeat].CPU ||
-			input.Chat != "" || input.Signal != "" || input.Command.Type == "leave" || input.Command.Type == "rematch" {
+			input.Chat != "" || (input.Signal != "" && connection.cpuVersion != 2) || input.Command.Type == "leave" || input.Command.Type == "rematch" {
 			return fmt.Errorf("no tienes el control de ese jugador CPU")
 		}
 		seat = cpuSeat
+	}
+	if input.CPUKind == "memory" {
+		return r.advanceCPUMemory(user.ID, connectionID, input)
 	}
 	if len(m.Options.CPUSeats) > 0 && r.controller == "" && input.Chat == "" && input.Signal == "" && input.Command.Type != "leave" && input.Command.Type != "rematch" {
 		return fmt.Errorf("esperando a un jugador para continuar con la CPU")
@@ -567,14 +597,51 @@ func (h *Host) HandleFromConnection(ctx context.Context, code string, user store
 	if input.Chat == "" && input.Signal == "" && input.Command.Type == "rematch" {
 		return h.rematch(ctx, r, user, input, key)
 	}
-	if !h.Updating() && input.Chat == "" && input.Signal == "" && m.State != nil && !m.Deadline.IsZero() && !time.Now().Before(m.Deadline) {
+	if !h.Updating() && input.Chat == "" && (input.Signal == "" || input.CPUSeat != nil) && m.State != nil && !m.Deadline.IsZero() && !time.Now().Before(m.Deadline) {
 		if err := h.expire(ctx, r, m); err != nil {
 			return err
 		}
 		m = r.match
 	}
+	v2 := input.CPUSeat != nil && r.connections[connectionID].cpuVersion == 2
+	var memoryAck *cpuMemoryCursor
+	if v2 {
+		work := r.cpuWorkV2(m)
+		if work.View == nil || work.Seat != seat || input.CPUToken == "" || input.CPUToken != work.Token || input.CPUKind != work.Kind {
+			return fmt.Errorf("la decisión CPU quedó desactualizada")
+		}
+		if input.MemoryHand != nil || input.MemoryCursor != nil {
+			if input.MemoryHand == nil || input.MemoryCursor == nil || work.Memory == nil ||
+				!work.Memory.Complete || work.Memory.End != work.Memory.Total ||
+				*input.MemoryHand != work.Memory.Hand || *input.MemoryCursor != work.Memory.End {
+				return fmt.Errorf("la memoria CPU quedó desactualizada")
+			}
+			memoryAck = &cpuMemoryCursor{Game: m.GameNumber, Hand: *input.MemoryHand, Cursor: *input.MemoryCursor}
+		}
+		if work.Kind == "signal" {
+			if input.Command != (rules.Command{}) || (input.Signal != "none" && !validSignal(input.Signal)) {
+				return fmt.Errorf("seña CPU inválida")
+			}
+			if !learning.TruthfulSignal(*work.View, input.Signal) {
+				return fmt.Errorf("la CPU solo puede enviar señas verdaderas")
+			}
+		} else if input.Signal != "" {
+			return fmt.Errorf("seña CPU fuera de oportunidad")
+		}
+	} else if input.CPUKind != "" || input.CPUToken != "" || input.MemoryHand != nil || input.MemoryCursor != nil {
+		return fmt.Errorf("protocolo CPU no negociado")
+	}
 	next := clone(m)
+	if v2 && input.CPUKind == "signal" {
+		next.CPUCommunication.StartHand(m.State.HandNumber)
+		if !next.CPUCommunication.Consume(seat, m.State.Round, 0, m.Config.Players, [4]bool{}) {
+			return fmt.Errorf("oportunidad CPU consumida")
+		}
+	}
 	switch {
+	case v2 && input.CPUKind == "signal" && input.Signal == "none":
+		// Consumed privately: no signal event and no deadline renewal.
+		next.captureCPUMemory(seat)
 	case input.Chat != "":
 		message := strings.TrimSpace(input.Chat)
 		if message == "" || len([]rune(message)) > 500 {
@@ -584,6 +651,9 @@ func (h *Host) HandleFromConnection(ctx context.Context, code string, user store
 	case input.Signal != "":
 		if seat < 0 || m.State == nil || m.State.Phase != rules.Playing {
 			return fmt.Errorf("no puedes hacer señas ahora")
+		}
+		if m.Config.Players != 4 {
+			return fmt.Errorf("las señas son solo para partidas 2v2")
 		}
 		if !validSignal(input.Signal) {
 			return fmt.Errorf("seña inválida")
@@ -600,7 +670,14 @@ func (h *Host) HandleFromConnection(ctx context.Context, code string, user store
 				signal.Visible[other] = roll == 0
 			}
 		}
+		next.CPUCommunication.StartHand(m.State.HandNumber)
+		next.CPUCommunication.Record(learning.Signal{Seat: signal.Seat, Kind: signal.Kind}, signal.Visible)
+		next.recordCPUSignal(signal)
 		next.Signals = append(next.Signals, signal)
+		next.StoredSignals = append(next.StoredSignals, persistedSignal{Value: signal, Visibility: signal.Visible})
+		if len(next.StoredSignals) > 20 {
+			next.StoredSignals = next.StoredSignals[len(next.StoredSignals)-20:]
+		}
 		if len(next.Signals) > 20 {
 			next.Signals = next.Signals[len(next.Signals)-20:]
 		}
@@ -645,7 +722,15 @@ func (h *Host) HandleFromConnection(ctx context.Context, code string, user store
 			delete(next.Recent, id)
 		}
 	}
-	return h.commit(ctx, r, next)
+	if err := h.commit(ctx, r, next); err != nil {
+		return err
+	}
+	if memoryAck != nil {
+		connection := r.connections[connectionID]
+		connection.memoryCursors[seat] = *memoryAck
+		r.connections[connectionID] = connection
+	}
+	return nil
 }
 
 func validSignal(signal string) bool {
@@ -768,6 +853,8 @@ func (h *Host) expire(ctx context.Context, r *room, m *Match) error {
 		}
 		state, err = rules.StartHand(*m.State, deck)
 		next.Signals = nil
+		next.StoredSignals = nil
+		next.CPUCommunication.StartHand(state.HandNumber)
 		next.Events = nil
 	} else {
 		choice := 0

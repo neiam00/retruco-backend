@@ -5,21 +5,31 @@ import (
 	"time"
 
 	"github.com/neiam00/retruco-backend/cpu"
+	"github.com/neiam00/retruco-backend/cpu/learning"
 	"github.com/neiam00/retruco-backend/rules"
 )
 
 type playerConnection struct {
-	userID string
-	order  uint64
+	userID        string
+	order         uint64
+	cpuVersion    int
+	memoryVersion int
+	memoryCursors [4]cpuMemoryCursor
 }
 
 // CPUWork contains only the acting CPU's authorized view. It never contains
 // other players' hidden cards or the deck, and is only sent to its controller.
 type CPUWork struct {
-	Version    int         `json:"version"`
-	Controlled bool        `json:"controlled"`
-	Seat       int         `json:"seat"`
-	View       *rules.View `json:"view,omitempty"`
+	Version    int                  `json:"version"`
+	Controlled bool                 `json:"controlled"`
+	Seat       int                  `json:"seat"`
+	View       *rules.View          `json:"view,omitempty"`
+	Kind       string               `json:"kind,omitempty"`
+	Token      string               `json:"token,omitempty"`
+	Features   *CPUFeatures         `json:"features,omitempty"`
+	SignalMask *[6]bool             `json:"signalMask,omitempty"`
+	MemoryKey  string               `json:"memoryKey,omitempty"`
+	Memory     *learning.MemoryPage `json:"memory,omitempty"`
 }
 
 func validateCPUSeats(players int, seats []int) error {
@@ -59,20 +69,35 @@ func startWhenFull(match *Match) error {
 	if err != nil {
 		return err
 	}
+	match.CPUCommunication.ResetMatch()
+	match.CPUCommunication.StartHand(state.HandNumber)
+	match.CPUHistoryComplete = true
+	match.CPUMemoryVersion = learning.MemoryVersion
+	match.CPUMemory = learning.MemoryJournal{}
+	match.CPUVisibleSignals = [4][]learning.Signal{}
 	match.State = &state
+	match.captureCPUMemory(-1)
 	match.Deadline = time.Now().Add(30 * time.Second)
 	return nil
 }
 
 // ConnectPlayer tracks game sockets independently of voice sockets and watchers.
 // Only one connected human tab runs CPU decisions, even with several tabs open.
-func (h *Host) ConnectPlayer(code, userID, connectionID string) func() {
+func (h *Host) ConnectPlayer(code, userID, connectionID string, cpuVersions ...int) func() {
 	r := h.lockRoom(code)
 	if r == nil {
 		return func() {}
 	}
+	version := 1
+	if len(cpuVersions) > 0 && cpuVersions[0] == 2 {
+		version = 2
+	}
 	r.connectionOrder++
-	r.connections[connectionID] = playerConnection{userID: userID, order: r.connectionOrder}
+	memoryVersion := 0
+	if version == 2 && len(cpuVersions) > 1 && cpuVersions[1] == learning.MemoryVersion {
+		memoryVersion = learning.MemoryVersion
+	}
+	r.connections[connectionID] = playerConnection{userID: userID, order: r.connectionOrder, cpuVersion: version, memoryVersion: memoryVersion}
 	if r.recovering && r.hasConnectedPlayer(r.match) {
 		r.recovering = false
 		renewDeadline(r.match)
@@ -180,6 +205,9 @@ func (h *Host) CPUWork(code, userID, connectionID string) CPUWork {
 	if connectionID == "" || r.controller != connectionID || connection.userID != userID {
 		return CPUWork{}
 	}
+	if connection.cpuVersion == 2 {
+		return r.cpuWorkV2(match)
+	}
 	work := CPUWork{Version: cpu.ProtocolVersion, Controlled: true, Seat: -1}
 	if match.State == nil {
 		return work
@@ -192,6 +220,7 @@ func (h *Host) CPUWork(code, userID, connectionID string) CPUWork {
 			continue
 		}
 		view := rules.ViewFor(*match.State, seat, false)
+		view.Legal = cpu.PlayingChoices(view, seat)
 		if len(view.Legal) > 0 {
 			work.Seat, work.View = seat, &view
 			break

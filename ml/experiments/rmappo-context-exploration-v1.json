@@ -1,0 +1,238 @@
+{
+  "version": 3,
+  "cell": "lstm",
+  "profiles": [
+    "control",
+    "targeted"
+  ],
+  "seeds": [
+    5101,
+    5102,
+    5103
+  ],
+  "parent_sources": {
+    "5101": {
+      "origin": "ml/runs/rmappo-game-calibration-v1/candidates/sharp.pt",
+      "sha256": "e9fef3ff4598520ea066edacde748e14c9893ff7bc2939af4a07b3e6ebe5798a",
+      "original_seed": 4101,
+      "original_choices": 1000549,
+      "ancestor_choices": 3251800,
+      "total_ancestral_choices": 4252349,
+      "file": "5101.pt"
+    },
+    "5102": {
+      "origin": "ml/runs/rmappo-game-calibration-v1/candidates/sharp.pt",
+      "sha256": "e9fef3ff4598520ea066edacde748e14c9893ff7bc2939af4a07b3e6ebe5798a",
+      "original_seed": 4101,
+      "original_choices": 1000549,
+      "ancestor_choices": 3251800,
+      "total_ancestral_choices": 4252349,
+      "file": "5102.pt"
+    },
+    "5103": {
+      "origin": "ml/runs/rmappo-game-calibration-v1/candidates/sharp.pt",
+      "sha256": "e9fef3ff4598520ea066edacde748e14c9893ff7bc2939af4a07b3e6ebe5798a",
+      "original_seed": 4101,
+      "original_choices": 1000549,
+      "ancestor_choices": 3251800,
+      "total_ancestral_choices": 4252349,
+      "file": "5103.pt"
+    }
+  },
+  "mode_win_rate_targets": {
+    "1v1": 0.7,
+    "2v2": 0.6
+  },
+  "budgets": [
+    500000,
+    1000000,
+    1500000,
+    2000000
+  ],
+  "save_every": 250000,
+  "steps": 8192,
+  "environments": 32,
+  "workers": 8,
+  "batch_size": 512,
+  "warmups": 3,
+  "warmup_choices": 8192,
+  "evaluation_workers": 4,
+  "max_wall_hours": 12,
+  "evaluation_reserve_hours": 4,
+  "selection_pairs": 64,
+  "selection_seed": 186000,
+  "selection_diagnostic_pairs": 32,
+  "selection_diagnostic_seed": 186100,
+  "final_pairs": 2000,
+  "final_seed": 101200,
+  "final_diagnostic_pairs": 128,
+  "final_diagnostic_seed": 169500,
+  "primary_specs": [
+    {
+      "id": "native-headsup",
+      "opponent": "native",
+      "partner": "reference-cpu",
+      "players": 2
+    },
+    {
+      "id": "native-literal-v2",
+      "opponent": "native",
+      "partner": "literal-v2",
+      "players": 4
+    },
+    {
+      "id": "native-trusting-v2",
+      "opponent": "native",
+      "partner": "trusting-v2",
+      "players": 4
+    },
+    {
+      "id": "native-cautious-v2",
+      "opponent": "native",
+      "partner": "cautious-v2",
+      "players": 4
+    },
+    {
+      "id": "native-reference-human",
+      "opponent": "native",
+      "partner": "reference-human",
+      "players": 4
+    }
+  ],
+  "diagnostic_specs": [
+    {
+      "id": "parent-headsup",
+      "opponent": "parent",
+      "partner": "reference-cpu",
+      "players": 2
+    },
+    {
+      "id": "parent-literal-v2",
+      "opponent": "parent",
+      "partner": "literal-v2",
+      "players": 4
+    },
+    {
+      "id": "parent-reference-human",
+      "opponent": "parent",
+      "partner": "reference-human",
+      "players": 4
+    },
+    {
+      "id": "native-independent-partner",
+      "opponent": "native",
+      "partner": "independent-partner",
+      "players": 4
+    },
+    {
+      "id": "parent-independent-partner",
+      "opponent": "parent",
+      "partner": "independent-partner",
+      "players": 4
+    },
+    {
+      "id": "resistant-literal-v2",
+      "opponent": "resistant",
+      "partner": "literal-v2",
+      "players": 4
+    },
+    {
+      "id": "native-literal-v3",
+      "opponent": "native",
+      "partner": "literal-v3",
+      "players": 4
+    },
+    {
+      "id": "native-trusting-v3",
+      "opponent": "native",
+      "partner": "trusting-v3",
+      "players": 4
+    },
+    {
+      "id": "native-cautious-v3",
+      "opponent": "native",
+      "partner": "cautious-v3",
+      "players": 4
+    }
+  ],
+  "smoke": false,
+  "regression_margin": 0.02,
+  "scope": "Six matched corrected-rule RMAPPO continuations from a separately rechecked calibrated checkpoint. Compare ordinary continuation with public tactical candidate features plus an annealed semantic betting exploration loss. The two changes are a bundle. Freeze selections before the 2,000-pair-per-configuration final. A benchmark result is not release approval.",
+  "training_objective": "Terminal team win/loss only. All arms share GAE .99 and response-KL guards. Targeted arm introduces public situational information into reserved action columns and adds a training-only uniform semantic response KL (.02 linearly to zero by 1m additional choices); neither forces a bet nor changes the reward.",
+  "target_population": {
+    "native_opponents": 0.75,
+    "historical_opponents": 0.2,
+    "fixed_opponents": 0.05,
+    "headsup_matches": 0.4,
+    "teammates": {
+      "joint_learner": 0.2,
+      "frozen_cpu": 0.02,
+      "reference_human": 0.3,
+      "each_literal_trusting_cautious_v2_v3": 0.08
+    }
+  },
+  "checkpoint_policy": "Immutable full resumable checkpoints every 250,000 additional choices. Eligible common rounds are 500k, 1m, 1.5m and 2m. Whole matches can overshoot; reserve four hours for evaluation.",
+  "response_kl_stop": 0.03,
+  "response_kl_rollback": 0.05,
+  "carried_seconds": 2832.1185150146484,
+  "starter_screen": {
+    "plan": "ml/runs/rmappo-game-calibration-v1/plan.json",
+    "frozen_screen_choice": "ml/runs/rmappo-game-calibration-v1/screen-choice.json",
+    "choice_path": "ml/runs/rmappo-game-calibration-v1/choice.json",
+    "scale": 1.5,
+    "screened_game_logit_gains": [
+      1,
+      0.75,
+      1.5,
+      2.0
+    ],
+    "screen_pairs": 64,
+    "recheck_pairs": 256,
+    "recheck_diagnostic_pairs": 64,
+    "accepted": true,
+    "original_checkpoint": "ml/runs/rmappo-retraining-v1/trials/gae99-4101/endpoints/choices-1000000.pt",
+    "approved": false
+  },
+  "corrected_simulator": {
+    "cantos": "authoritative contextual declarations and flor eligibility",
+    "signals": "none-only in 1v1; truthful optional team signals in 2v2",
+    "native_opponent": "publicly proven deciding-perico wins accepted, proven losses declined; no hidden information"
+  },
+  "guard_semantics": "Exact forward KL from pre-update legal distribution, aggregate responses and response families with >=32 genuine choices. Stop actor at .03, restore epoch actor+Adam at .05; critic keeps learning.",
+  "report_reuse": "Identical checkpoint SHA and identical protocol/deals evaluated once; duplicated parent report paths are aliases, never independent samples.",
+  "remaining_model_needs": [
+    "fresh 2,000-pair native confirmation per configuration",
+    "independent partner and frozen-opponent transfer",
+    "real-human compatibility",
+    "useful signals and bluffing",
+    "quantized playing strength and browser parity of retained weights",
+    "recurrent reconnect and low-end device validation of retained bundle"
+  ],
+  "preparation_allowance_seconds": 120,
+  "prior_nominee": {
+    "origin": "ml/runs/rmappo-retraining-v1/trials/gae99-4101/endpoints/choices-1000000.pt",
+    "sha256": "0138942cea7031ad9b8cab62f046a6fd200bbda9bcfe617493fb5d546d43ef98"
+  },
+  "candidate_features": 1,
+  "semantic_exploration": 0.02,
+  "semantic_anneal_choices": 1000000,
+  "public_features": {
+    "version": 1,
+    "reserved_action_columns": [
+      36,
+      47
+    ],
+    "actor_parameters": 122567,
+    "critic_parameters": 394753,
+    "initial_policy": "Zero weights on formerly unused columns on migration. All earlier scores and masked distributions preserved. No privileged information or 1v1 team communication."
+  },
+  "stream_audit": {
+    "file": "ml/runs/rmappo-context-preflight-v1/deal-streams.json",
+    "sha256": "f3bf91b327f2cfbb94feac5fd127dfe6a1c80b34d3efd3605601eb3436f5e9f9"
+  },
+  "selection_safeguard": "Always report three actual trained endpoints in production. Before final deals, keep the screened starter as the explicit nominee if no trained seed passes the native guards or if its selection rank equals or exceeds the strongest guarded endpoint. Never reselect on final.",
+  "readiness": {
+    "report": "ml/reports/rmappo-context-readiness-v1.json",
+    "sha256": "714f339fd2ca12da3f986ce207d3ae0512c605bcdfbc68c34a0fbfc46157316a"
+  }
+}

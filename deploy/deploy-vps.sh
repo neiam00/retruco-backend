@@ -5,8 +5,8 @@ umask 077
 
 archive="${1:?Usage: deploy-vps.sh SOURCE_ARCHIVE COMMIT_SHA IMAGE_ARCHIVE IMAGE_SHA256}"
 revision="${2:?Supply the deployed commit SHA}"
-image_archive="${3:?Supply the CI-built image archive}"
-image_sha256="${4:?Supply the CI-built image archive SHA-256}"
+image_archive="${3:?Supply the release image archive}"
+image_sha256="${4:?Supply the release image archive SHA-256}"
 image="retruco-backend:$revision"
 deploy_dir="${RETRUCO_DEPLOY_DIR:-/opt/retruco/backend}"
 compose="${RETRUCO_COMPOSE:-/usr/local/sbin/retruco-compose}"
@@ -116,19 +116,19 @@ fi
 tar -xzf "$archive" -C "$stage"
 [[ -f "$stage/Dockerfile" && -f "$stage/compose.yaml" ]] || { echo "Archive is not the backend repository" >&2; exit 1; }
 
-# Verify the exact CI archive before loading it. Image IDs differ between
+# Verify the image archive before loading it. Image IDs differ between
 # containerd and classic Docker stores; the archive checksum is portable.
 checksum="$(sha256sum -- "$image_archive")"
 [[ "${checksum%% *}" == "$image_sha256" ]] || {
-  echo "CI image archive checksum does not match" >&2
+  echo "Release image archive checksum does not match" >&2
   exit 1
 }
-echo "Verified CI image archive checksum $image_sha256."
+echo "Verified Release image archive checksum $image_sha256."
 docker image load --input "$image_archive" < /dev/null
 platform="$(docker version --format '{{.Server.Os}}/{{.Server.Arch}}')"
 metadata="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}} {{.Os}}/{{.Architecture}}' "$image")"
 [[ "$metadata" == "$revision $platform" ]] || {
-  echo "CI image commit label or platform does not match this deployment/VPS" >&2
+  echo "Release image commit label or platform does not match this deployment/VPS" >&2
   exit 1
 }
 
@@ -144,7 +144,7 @@ rsync --archive --delete \
   "$stage/" "$deploy_dir/"
 
 "$compose" config --quiet
-echo "Using CI-built backend commit $revision."
+echo "Using release image for backend commit $revision."
 docker image tag "$image" retruco-backend:production
 
 backup_dir="$parent_dir/backups"
@@ -185,7 +185,7 @@ api_stopped=0
 
 healthy=0
 for ((attempt = 1; attempt <= 30; attempt++)); do
-  # Read the proxy secret inside the container; never send it through Actions logs.
+  # Read the proxy secret inside the container; never send it to deployment logs.
   # shellcheck disable=SC2016
   if "$compose" exec -T api sh -c \
     'wget -q -O /dev/null --header="X-Retruco-Proxy-Secret: $API_PROXY_SECRET" http://127.0.0.1:8080/api/health' \

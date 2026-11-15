@@ -1,0 +1,147 @@
+{
+  "version": 1,
+  "steps": 8192,
+  "workers": 8,
+  "environments": 32,
+  "batch_size": 64,
+  "calibration_choices": 2048,
+  "warmup_max": 4,
+  "memory_gib": 8,
+  "evaluation_workers": 4,
+  "actor_memory": 64,
+  "heldout_parent": 103,
+  "critic_hidden": [
+    256,
+    128
+  ],
+  "league_interval": 50000,
+  "parent_anchor": 0.01,
+  "response_anchor": 0.1,
+  "signal_anchor": 0.05,
+  "primary_specs": [
+    {
+      "id": "native-headsup",
+      "opponent": "native",
+      "partner": "reference-cpu",
+      "players": 2
+    },
+    {
+      "id": "native-literal-v2",
+      "opponent": "native",
+      "partner": "literal-v2",
+      "players": 4
+    },
+    {
+      "id": "native-trusting-v2",
+      "opponent": "native",
+      "partner": "trusting-v2",
+      "players": 4
+    },
+    {
+      "id": "native-cautious-v2",
+      "opponent": "native",
+      "partner": "cautious-v2",
+      "players": 4
+    },
+    {
+      "id": "native-reference-human",
+      "opponent": "native",
+      "partner": "reference-human",
+      "players": 4
+    }
+  ],
+  "diagnostic_specs": [
+    {
+      "id": "parent-headsup",
+      "opponent": "parent",
+      "partner": "reference-cpu",
+      "players": 2
+    },
+    {
+      "id": "parent-literal-v2",
+      "opponent": "parent",
+      "partner": "literal-v2",
+      "players": 4
+    },
+    {
+      "id": "parent-reference-human",
+      "opponent": "parent",
+      "partner": "reference-human",
+      "players": 4
+    },
+    {
+      "id": "native-independent-partner",
+      "opponent": "native",
+      "partner": "independent-partner",
+      "players": 4
+    },
+    {
+      "id": "parent-independent-partner",
+      "opponent": "parent",
+      "partner": "independent-partner",
+      "players": 4
+    },
+    {
+      "id": "resistant-literal-v2",
+      "opponent": "resistant",
+      "partner": "literal-v2",
+      "players": 4
+    }
+  ],
+  "mode_win_rate_targets": {
+    "1v1": 0.7,
+    "2v2": 0.65
+  },
+  "max_wall_hours": 12,
+  "recipes": {
+    "L99": {
+      "native_fraction": 0.0,
+      "gae_lambda": 0.99
+    },
+    "N99": {
+      "native_fraction": 0.5,
+      "gae_lambda": 0.99
+    },
+    "L100": {
+      "native_fraction": 0.0,
+      "gae_lambda": 1.0
+    },
+    "N100": {
+      "native_fraction": 0.5,
+      "gae_lambda": 1.0
+    }
+  },
+  "discovery_seeds": [
+    501,
+    502,
+    503
+  ],
+  "confirmation_seeds": [
+    601,
+    602,
+    603
+  ],
+  "discovery_choices": 250000,
+  "confirmation_checkpoints": [
+    500000,
+    1000000,
+    2000000
+  ],
+  "headsup_fraction": 0.4,
+  "discovery_pairs": 64,
+  "discovery_seed": 171000,
+  "diagnostic_pairs": 32,
+  "diagnostic_seed": 172000,
+  "selection_pairs": 32,
+  "selection_seed": 173000,
+  "final_pairs": 256,
+  "final_seed": 174000,
+  "ablation_pairs": 64,
+  "ablation_seed": 175000,
+  "signal_policy": "truthful-cpu-v1",
+  "reward": "terminal match win +1 / loss -1 only",
+  "starter": "exact frozen stronger legacy champion, widened policy/value preserving from16to64; fresh optimizers for new seeds",
+  "training_opponents": "native fraction0/.5 over fixed historical league; parentD103 held out from all training",
+  "selection": "normalized target score .5*(native1v1/.70+native2v2/.65); guard native modes and diagnostics against stronger starter by mean\u22122pp; checkpointselection excludes diagnostics until final independent confirmation",
+  "scope": "development selection then frozen-nominee independent development confirmation; no release approval"
+}

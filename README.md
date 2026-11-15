@@ -45,6 +45,8 @@ migrated database supplied in `DATABASE_TEST_URL`; otherwise they are skipped.
   decks and timeout choices.
 - `internal/game` manages matches, persistence, deadlines, and views filtered
   for each player. CPU moves are validated by the server.
+- [`ml`](ml/README.md) contains the Python training and evaluation tools, the Go
+  simulator interface, and the Rust evaluator for browser CPU candidates.
 - `internal/api` provides HTTP and WebSocket endpoints, sessions, origin checks,
   and voice signaling.
 - `internal/store` persists users, sessions, and match snapshots in PostgreSQL.
@@ -64,10 +66,9 @@ or changing the production file-descriptor budget.
 
 ## Deployment
 
-See the [VPS deployment guide](DEPLOYMENT-VPS.md),
-[automated deployment notes](deploy/GITHUB-ACTIONS.md), and
-[capacity and migration notes](deploy/CAPACITY.md). Review deployment-specific
-paths and configuration before using the supplied scripts. Production Compose
+Follow the [VPS deployment guide](DEPLOYMENT-VPS.md) to install or manually
+upgrade a backend. Review the host paths and Compose configuration before
+running the deployment script. Production Compose
 reads frontend origins from `ALLOWED_ORIGINS` in the private environment file;
 the backend hostname is configured with `BACKEND_HOST`.
 

@@ -69,10 +69,11 @@ type position struct {
 	visibleBest     int
 	teammateWinning bool
 	ordinaryFlor    bool
+	team            int
 }
 
 func evaluate(view rules.View, seat int) position {
-	p := position{view: view, strengths: make(map[int]int)}
+	p := position{view: view, strengths: make(map[int]int), team: seat % 2}
 	p.ordinaryFlor = view.FlorValid && view.Holding.Flor > 0 && !view.Holding.Receta
 	for _, card := range view.Hand {
 		if card.Used {
@@ -148,6 +149,14 @@ func (p position) score(command rules.Command) int {
 }
 
 func (p position) responseScore(command rules.Command) int {
+	if p.view.Pending != nil && p.view.Pending.Kind == "truco" {
+		if winner, certain := publicTrucoWinner(p.view); certain {
+			if (winner == p.team && command.Kind == "accept") || (winner != p.team && command.Kind == "decline") {
+				return 200
+			}
+			return -1000
+		}
+	}
 	if p.view.Pending != nil && p.view.Pending.Kind == "privo" {
 		if command.Kind == "present_flor" {
 			return 200
@@ -206,11 +215,13 @@ func (p position) declarationScore(command rules.Command) int {
 	expected := ""
 	if p.ordinaryFlor {
 		switch command.Type {
-		case "play":
+		case "play", "burn":
 			expected = "flor"
-			if p.remaining == 1 {
+			if command.Type == "burn" && p.view.MandatoryStack {
+				expected = "flor_flor"
+			} else if p.remaining == 1 {
 				expected = "presento_flor"
-			} else if p.view.Round == 0 && p.view.Config.Players == 4 {
+			} else if command.Type == "play" && p.view.Round == 0 && p.view.Config.Players == 4 {
 				// A ley preserves the teammate's possible ordinary flor too.
 				expected = "a_ley"
 			}
@@ -219,6 +230,15 @@ func (p position) declarationScore(command rules.Command) int {
 		case "call", "respond":
 			expected = "con_mi_flor"
 			if command.Type == "call" && command.Kind == "ley_envido" {
+				expected = ""
+			}
+			if command.Type == "respond" && p.view.Pending != nil && p.view.Pending.Kind == "flor" {
+				expected = "con_flor"
+				if command.Kind == "decline" {
+					expected = ""
+				}
+			}
+			if command.Kind == "flor" || command.Kind == "flowers_no" {
 				expected = ""
 			}
 		}

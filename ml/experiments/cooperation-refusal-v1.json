@@ -1,0 +1,133 @@
+{
+  "version": 1,
+  "max_wall_hours": 3,
+  "arms": {
+    "A": {
+      "cooperation_practice": false,
+      "anchor": false
+    },
+    "B": {
+      "cooperation_practice": true,
+      "anchor": false
+    },
+    "C": {
+      "cooperation_practice": false,
+      "anchor": true
+    },
+    "D": {
+      "cooperation_practice": true,
+      "anchor": true
+    }
+  },
+  "seeds": [
+    401,
+    402,
+    403
+  ],
+  "choices": 200000,
+  "steps": 8192,
+  "workers": 8,
+  "environments": 32,
+  "batch_size": 64,
+  "calibration_choices": 2048,
+  "warmup_max": 4,
+  "memory_gib": 8,
+  "evaluation_workers": 4,
+  "actor_memory": 64,
+  "heldout_parent": 103,
+  "critic_hidden": [
+    256,
+    128
+  ],
+  "league_interval": 50000,
+  "parent_anchor": 0.01,
+  "response_anchor": 0.1,
+  "signal_anchor": 0.05,
+  "primary_pairs": 64,
+  "primary_seed": 181000,
+  "diagnostic_pairs": 32,
+  "diagnostic_seed": 182000,
+  "ablation_pairs": 32,
+  "ablation_seed": 183000,
+  "primary_specs": [
+    {
+      "id": "native-headsup",
+      "opponent": "native",
+      "partner": "reference-cpu",
+      "players": 2
+    },
+    {
+      "id": "native-literal-v2",
+      "opponent": "native",
+      "partner": "literal-v2",
+      "players": 4
+    },
+    {
+      "id": "native-trusting-v2",
+      "opponent": "native",
+      "partner": "trusting-v2",
+      "players": 4
+    },
+    {
+      "id": "native-cautious-v2",
+      "opponent": "native",
+      "partner": "cautious-v2",
+      "players": 4
+    },
+    {
+      "id": "native-reference-human",
+      "opponent": "native",
+      "partner": "reference-human",
+      "players": 4
+    }
+  ],
+  "diagnostic_specs": [
+    {
+      "id": "parent-headsup",
+      "opponent": "parent",
+      "partner": "reference-cpu",
+      "players": 2
+    },
+    {
+      "id": "parent-literal-v2",
+      "opponent": "parent",
+      "partner": "literal-v2",
+      "players": 4
+    },
+    {
+      "id": "parent-reference-human",
+      "opponent": "parent",
+      "partner": "reference-human",
+      "players": 4
+    },
+    {
+      "id": "native-independent-partner",
+      "opponent": "native",
+      "partner": "independent-partner",
+      "players": 4
+    },
+    {
+      "id": "parent-independent-partner",
+      "opponent": "parent",
+      "partner": "independent-partner",
+      "players": 4
+    },
+    {
+      "id": "resistant-literal-v2",
+      "opponent": "resistant",
+      "partner": "literal-v2",
+      "players": 4
+    }
+  ],
+  "mode_win_rate_targets": {
+    "1v1": 0.7,
+    "2v2": 0.65
+  },
+  "starter": "exact copied legacy-champion-lstm16.pt from lstm64-historical-v1 inputs; policy/value preserving widening, fresh optimizers",
+  "signal_policy": "truthful-cpu-v1",
+  "reward": "terminal team match win +1/loss -1 only",
+  "scope": "short fixed-endpoint development trials, no parent substitution and no release approval",
+  "arms_scope": "population practice and anchoring are bundled interventions; factorial effects do not identify individual mechanisms",
+  "evaluation_scope": "primary native target1v1 and equal4partner human-role2v2; D103 CPU partner diagnostics separate; all targets12/24 floroff/on",
+  "retention": "retain stronger starter unless a trained endpoint improves native2v2 with paired lower bound>0, preserves1v1 lower bound>=-2pp, and all diagnostic point changes>=-2pp"
+}

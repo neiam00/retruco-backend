@@ -15,8 +15,8 @@ configuration to your own domain and hosting environment before deployment.
    HTTPS. Production Compose requires `ALLOWED_ORIGINS` from the environment
    file; use comma-separated exact origins with no paths or trailing slashes.
    Consult the NGINX templates when adapting the configuration.
-3. Load the CI-built image and tag it `retruco-backend:production` (or, for a
-   manual first installation, run `docker build -t retruco-backend:production .`).
+3. On a first installation, build the backend for the VPS platform with
+   `docker build -t retruco-backend:production .`.
    Production Compose removes the development build configuration and only uses
    this local image, with registry pulls disabled. Use a current Docker Compose
    release supporting `!reset` overrides.
@@ -31,14 +31,44 @@ configuration to your own domain and hosting environment before deployment.
    argument, it reads `BACKEND_HOST` from the running proxy and handles only
    `/etc/letsencrypt/live/<BACKEND_HOST>`.
 
-For upgrades from an installation that kept allowed origins in Compose source,
-the deployment script copies the running API's `ALLOWED_ORIGINS` into the private
-environment file before replacing source. Existing configured values are kept.
-Unless `RETRUCO_HEALTH_URL` is set, the public health check uses the running
-API's first allowed origin followed by `/api/health`. Explicitly override this
-URL when changing domains. See [automated deployment](deploy/GITHUB-ACTIONS.md),
-[voice configuration](deploy/VOICE.md), and [capacity and migration notes](deploy/CAPACITY.md).
+## Upgrading an existing server
 
-Run only one API instance: match ownership and subscriptions are held in memory.
-Plan a maintenance window for migrations and deployment, and test backups and
-restores before relying on them.
+Use the bundled upgrade script with an already running installation. Its defaults are
+`/opt/retruco/backend` for the deployment directory and `/usr/local/sbin/retruco-compose`
+for the host's Compose helper. The helper should select the `retruco` project, its private
+`.env.production` and the base, production and host-specific Compose files. The script
+preserves `compose.vps.yaml` and `deploy/nginx.vps.conf.template` in the deployment directory.
+Configure the host-specific proxy and mount paths before the first upgrade.
+
+Build from a clean checkout of the revision you tested, on a Docker builder targeting
+the VPS operating system and architecture. Create the archives outside the checkout:
+
+```sh
+revision=$(git rev-parse HEAD)
+git archive --format=tar.gz -o "../retruco-source-$revision.tar.gz" "$revision"
+docker build --label "org.opencontainers.image.revision=$revision" \
+  -t "retruco-backend:$revision" .
+docker image save "retruco-backend:$revision" | gzip > "../retruco-image-$revision.tar.gz"
+sha256sum "../retruco-image-$revision.tar.gz"
+```
+
+Transfer the two archives and the matching `deploy/deploy-vps.sh` to the VPS.
+Run the script during a maintenance window, supplying the full commit ID and the
+image digest from the build machine:
+
+```sh
+bash deploy-vps.sh "$source_archive" "$revision" "$image_archive" "$image_sha256"
+```
+
+The script verifies the image checksum, revision label and target platform. It
+notifies players, stops the API, backs up PostgreSQL and runs migrations before
+restarting the service. It records `.deployed-revision` after the internal and
+public health checks succeed. Set `RETRUCO_HEALTH_URL` when the public health
+endpoint is outside the first configured frontend origin. Voice relay settings
+are documented in the [voice guide](deploy/VOICE.md).
+
+A failed migration can leave the API stopped. Inspect the migration output and
+the backup in the sibling `backups/` directory before attempting recovery.
+Match ownership and WebSockets live in one API process. During a successful
+restart, the client reconnects and the server restores active hands from the
+last committed database snapshot.

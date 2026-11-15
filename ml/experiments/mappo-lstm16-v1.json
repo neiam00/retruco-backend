@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "name": "mappo-lstm16-v1",
+  "arms": ["A", "B", "C", "D"],
+  "seeds": [101, 102, 103],
+  "decisions_per_arm_seed": 1000000,
+  "steps_per_update": 8192,
+  "workers": 4,
+  "environments": 16,
+  "sequence_events": 32,
+  "epochs": 4,
+  "memory_gib": 8,
+  "max_hours_per_arm_seed": 24,
+  "validation_pairs": 128,
+  "validation_seed": 180000,
+  "validation_partners": ["reference", "literal", "silent", "deceptive"],
+  "memory_reset": "hand",
+  "population": "frozen parent plus parent history and existing scripted partners/opponents",
+  "learner_seats": "one designated seat per match in every arm",
+  "reward": "terminal team match result +1/-1",
+  "selection": "report all seeds; no final holdout or automatic approval"
+}

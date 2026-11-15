@@ -1,0 +1,174 @@
+{
+  "primary_specs": [
+    {
+      "id": "native-headsup",
+      "opponent": "native",
+      "partner": "reference-cpu",
+      "players": 2
+    },
+    {
+      "id": "native-literal-v2",
+      "opponent": "native",
+      "partner": "literal-v2",
+      "players": 4
+    },
+    {
+      "id": "native-trusting-v2",
+      "opponent": "native",
+      "partner": "trusting-v2",
+      "players": 4
+    },
+    {
+      "id": "native-cautious-v2",
+      "opponent": "native",
+      "partner": "cautious-v2",
+      "players": 4
+    },
+    {
+      "id": "native-reference-human",
+      "opponent": "native",
+      "partner": "reference-human",
+      "players": 4
+    }
+  ],
+  "diagnostic_specs": [
+    {
+      "id": "parent-headsup",
+      "opponent": "parent",
+      "partner": "reference-cpu",
+      "players": 2
+    },
+    {
+      "id": "parent-literal-v2",
+      "opponent": "parent",
+      "partner": "literal-v2",
+      "players": 4
+    },
+    {
+      "id": "parent-reference-human",
+      "opponent": "parent",
+      "partner": "reference-human",
+      "players": 4
+    },
+    {
+      "id": "native-independent-partner",
+      "opponent": "native",
+      "partner": "independent-partner",
+      "players": 4
+    },
+    {
+      "id": "parent-independent-partner",
+      "opponent": "parent",
+      "partner": "independent-partner",
+      "players": 4
+    },
+    {
+      "id": "resistant-literal-v2",
+      "opponent": "resistant",
+      "partner": "literal-v2",
+      "players": 4
+    },
+    {
+      "id": "native-literal-v3",
+      "opponent": "native",
+      "partner": "literal-v3",
+      "players": 4
+    },
+    {
+      "id": "native-trusting-v3",
+      "opponent": "native",
+      "partner": "trusting-v3",
+      "players": 4
+    },
+    {
+      "id": "native-cautious-v3",
+      "opponent": "native",
+      "partner": "cautious-v3",
+      "players": 4
+    }
+  ],
+  "mode_win_rate_targets": {
+    "1v1": 0.7,
+    "2v2": 0.6
+  },
+  "version": 1,
+  "cell": "lstm",
+  "seeds": [
+    2101,
+    2102,
+    2103
+  ],
+  "parent_sources": {
+    "2101": {
+      "file": "2101.pt",
+      "origin": "ml/runs/rmappo-v1/trials/lstm-1101/endpoints/choices-2000000.pt",
+      "sha256": "a311bbcc9a929ff6af69a84766b6bbfa851e76280b2928568c4fc857157028c1",
+      "original_seed": 1101,
+      "original_choices": 2000470,
+      "nominal_parent_budget": 2000000
+    },
+    "2102": {
+      "file": "2102.pt",
+      "origin": "ml/runs/rmappo-v1/trials/lstm-1102/endpoints/choices-2000000.pt",
+      "sha256": "3a14f2e33342366c50e2ead70ea65086139e11354346046cf0b9e0bdfc81acc8",
+      "original_seed": 1102,
+      "original_choices": 2000364,
+      "nominal_parent_budget": 2000000
+    },
+    "2103": {
+      "file": "2103.pt",
+      "origin": "ml/runs/rmappo-v1/trials/lstm-1103/endpoints/choices-2000000.pt",
+      "sha256": "c83661f243a90fcaf650446957123ba8f2e49a1a1a000ce0c878d68e6fb9002e",
+      "original_seed": 1103,
+      "original_choices": 2000575,
+      "nominal_parent_budget": 2000000
+    }
+  },
+  "arms": {
+    "A": {
+      "balance": false,
+      "betting": false
+    },
+    "B": {
+      "balance": true,
+      "betting": false
+    },
+    "C": {
+      "balance": false,
+      "betting": true
+    },
+    "D": {
+      "balance": true,
+      "betting": true
+    }
+  },
+  "choices": 250000,
+  "steps": 8192,
+  "workers": 8,
+  "environments": 32,
+  "batch_size": 512,
+  "warmups": 2,
+  "warmup_choices": 2048,
+  "evaluation_workers": 4,
+  "max_wall_hours": 12,
+  "evaluation_reserve_hours": 4,
+  "primary_pairs": 256,
+  "primary_seed": 142000,
+  "diagnostic_pairs": 64,
+  "diagnostic_seed": 143000,
+  "ablation_pairs": 64,
+  "ablation_seed": 144000,
+  "smoke": false,
+  "parent_selection": "LSTM family retained as the research direction from prior completed protocol;24-checkpoint audit supports latest common2m milestone. All3parentseeds used asmatchedblocks; no single lucky seed initialization.",
+  "curve_report": "ml/reports/rmappo-checkpoint-audit-v1.json",
+  "curve_report_sha256": "87ae6a863703b1308e964f79507d36aa44d00f25b0201a2c59a902c94f51b9bf",
+  "clock": "250000 additional genuine choices per trial; complete-match/minimum-stratum-coverage overshoot allowed; warmups outside choice budget",
+  "balance": "actual choice loss masses:.40heads-up;.10each literal-v3/trusting-v3/cautious-v3/reference-human;.18CPUlearner,.02CPUfrozen;cap8;actualmasses/ESS logged",
+  "betting": "response-only semantic forward KL to frozen legacy champion,.1perresponse;no forced decisions or reward change;shared actor allows indirect card/signal changes",
+  "scope": "fixed endpoint factorial development study,matched parent/continuation blocks;no release holdout or approval",
+  "runtime": {
+    "torch_threads": 1,
+    "deterministic_algorithms": true,
+    "replay_guard": 0.0002
+  }
+}

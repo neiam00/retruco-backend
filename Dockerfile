@@ -2,8 +2,7 @@ FROM golang:1.27.3-alpine AS toolchain
 RUN apk add --no-cache build-base
 WORKDIR /src
 
-# Standalone/local builds compile only production inputs. CI uses the same
-# toolchain with bind-mounted source and persistent Go caches instead.
+# The default image builds the server and migration tool from source.
 FROM toolchain AS build
 COPY go.mod go.sum ./
 RUN go mod download
@@ -21,7 +20,7 @@ USER retruco
 EXPOSE 8080
 CMD ["./server"]
 
-# The named context contains the exact binaries already built and checked in CI.
+# Alternatively, supply tested executables in a named "binaries" build context.
 FROM runtime-base AS ci-runtime
 COPY --from=binaries /server /migrate ./
 

@@ -631,7 +631,15 @@ func (s *Server) socket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	connectionID := rand.Text()
-	disconnect := s.host.ConnectPlayer(code, user.ID, connectionID)
+	cpuVersion := 1
+	if r.URL.Query().Get("cpuProtocol") == "2" {
+		cpuVersion = 2
+	}
+	memoryVersion := 0
+	if r.URL.Query().Get("cpuMemory") == "1" {
+		memoryVersion = 1
+	}
+	disconnect := s.host.ConnectPlayer(code, user.ID, connectionID, cpuVersion, memoryVersion)
 	defer disconnect()
 	updates, unsubscribe := s.host.Subscribe(code)
 	defer unsubscribe()
@@ -742,7 +750,11 @@ func (s *Server) socket(w http.ResponseWriter, r *http.Request) {
 				// close handshake. Other tabs and the match remain independent.
 				return
 			}
-			if !s.allow("ws:"+user.ID, 120) {
+			limitKey, limitMaximum := "ws:"+user.ID, 120
+			if msg.Input.CPUSeat != nil && s.host.CPUControllerV2(code, user.ID, connectionID) {
+				limitKey, limitMaximum = "cpu:"+code+":"+connectionID, 300
+			}
+			if !s.allow(limitKey, limitMaximum) {
 				if send(map[string]string{"type": "error", "error": "Espera un momento antes de volver a intentar."}) != nil {
 					return
 				}

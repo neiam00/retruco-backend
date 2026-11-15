@@ -1,0 +1,19 @@
+{
+  "experiment": "mixed-pilot-v2",
+  "purpose": "Early team-learning diagnostic alongside the main curriculum; no automatic promotion.",
+  "approved": false,
+  "independent_training_seed": false,
+  "parent_checkpoint_sha256": "9ee19120fd10a31b58b58fda40d310881e50a5c82a51ab585d6cbc166927759a",
+  "training_source_commit": "5f2f36fd0bbdbd44a56dda83eb1f8d0ac5afdff3",
+  "parent_training_update": 403,
+  "parent_training_seconds": 3607.6009267079935,
+  "players": 0,
+  "additional_hours": 1,
+  "workers": 4,
+  "environments": 32,
+  "device": "cpu",
+  "memory_gib": 4,
+  "learner_decisions_per_update": 8192,
+  "seed": 43,
+  "evaluation": "Validation seeds only; compare 1v1, 2v2, literal-partner signaling and cross-play before considering further work."
+}
