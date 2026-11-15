@@ -7,7 +7,7 @@ spectators, chat, voice signaling, and CPU opponents. The
 
 ## Getting started
 
-Requirements: Go 1.27.3 or later, Docker with Compose, and PostgreSQL 18.
+Requirements: Go 1.27.4 or later, Docker with Compose, and PostgreSQL 18.
 
 1. Copy `.env.example` to `.env`. Choose a local URL-safe password and use it in
    both `POSTGRES_PASSWORD` and `DATABASE_URL`.
