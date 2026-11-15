@@ -101,7 +101,7 @@ func headsUpLead(v rules.View, seat int) bool {
 	return true
 }
 
-func sampleShowdowns(v rules.View, seat int, revised, priceOpening bool) showdownOdds {
+func sampleShowdowns(v rules.View, seat int, revised, priceOpening, priceHeadsUp bool) showdownOdds {
 	d, ok := dealFromView(v, seat)
 	if !ok {
 		return showdownOdds{}
@@ -204,6 +204,12 @@ func sampleShowdowns(v rules.View, seat int, revised, priceOpening bool) showdow
 			switch {
 			case v.Pending.Kind == "envido" && n == 2 && blocksOrdinary[1-team]:
 				weight = 0 // A single opponent with ordinary flor cannot open plain envido.
+			case priceHeadsUp && v.Pending.Kind == "envido" && v.Pending.Previous >= 2 && rivalValue >= 30:
+				// An expensive counterraise after our bid conveys much more
+				// strength than an unsolicited two-point opening.
+				weight = 4 * min(6, max(1, v.Pending.Value-v.Pending.Previous))
+			case priceHeadsUp && v.Pending.Kind == "envido" && v.Pending.Value == 2 && v.Pending.Previous == 1:
+				weight = 1 + min(2, max(0, rivalValue-22)/4)
 			case rivalValue >= 30:
 				weight = 4
 			case rivalValue >= 25:

@@ -7,7 +7,8 @@ import (
 )
 
 // PlayingProfile identifies the CPU choices used in live games and paired evaluations.
-const PlayingProfile = "value-and-team-v9"
+const PlayingProfile = "value-and-team-v10"
+const RetrucoLadderProfile = "value-and-team-v9"
 const OpeningDefenseProfile = "value-and-team-v8"
 const ReferenceEnvidoProfile = "value-and-team-v7"
 const PartnershipProfile = "value-and-team-v6"
@@ -37,7 +38,7 @@ func PolicyChoices(v rules.View, seat int, profile string) ([]rules.Command, boo
 		v.Vira == nil || !v.Vira.Valid() || v.Holding == nil || len(v.Hand) != 3 || len(v.Seats) != n || len(v.Legal) < 2 {
 		return v.Legal, false
 	}
-	openingDefense := profile == PlayingProfile || profile == OpeningDefenseProfile
+	openingDefense := profile == PlayingProfile || profile == RetrucoLadderProfile || profile == OpeningDefenseProfile
 	referenceEnvido := openingDefense || profile == ReferenceEnvidoProfile
 	partnershipProfile := profile == PartnershipProfile || referenceEnvido
 	pericoProfile := profile == CompulsoryPericoProfile || partnershipProfile
@@ -45,6 +46,7 @@ func PolicyChoices(v rules.View, seat int, profile string) ([]rules.Command, boo
 	capRaiseAtTarget := profile == HeadsUpWagerProfile || teamProfile
 	e := wagerAssessment{view: v, seat: seat, priceOpening: n == 4 && referenceEnvido, revised: profile == HeadsUpCardProfile || capRaiseAtTarget,
 		capRaiseAtTarget: capRaiseAtTarget, capTruco: teamProfile && (n == 4 || pericoProfile)}
+	e.priceHeadsUp = n == 2 && profile == PlayingProfile
 	e.headsUpDefense = n == 2 && openingDefense
 	if e.headsUpDefense {
 		e.pegado = againstShownStack(v, seat)
@@ -96,6 +98,7 @@ func PolicyChoices(v rules.View, seat int, profile string) ([]rules.Command, boo
 }
 
 type wagerAssessment struct {
+	priceHeadsUp     bool
 	headsUpDefense   bool
 	openingBluff     bool
 	pegado           stackOutcomes
@@ -111,7 +114,7 @@ type wagerAssessment struct {
 
 func (a *wagerAssessment) estimate() *showdownOdds {
 	if a.odds == nil {
-		odds := sampleShowdowns(a.view, a.seat, a.revised, a.priceOpening && a.view.Pending == nil)
+		odds := sampleShowdowns(a.view, a.seat, a.revised, a.priceOpening && a.view.Pending == nil, a.priceHeadsUp)
 		a.odds = &odds
 	}
 	return a.odds
@@ -135,6 +138,14 @@ func (a *wagerAssessment) allows(c rules.Command) bool {
 		}
 	}
 	if kind == "truco" {
+		if a.priceHeadsUp && v.Pending != nil && (c.Kind == "accept" || c.Kind == "decline") {
+			if winner, known := publicTrucoWinner(v); known {
+				return (c.Kind == "accept") == (winner == a.seat%2)
+			}
+			if c.Kind == "decline" && v.Pending.Previous >= v.Config.Target-v.Scores[1-a.seat%2] {
+				return false
+			}
+		}
 		if a.exposesWeakEnvido(c) {
 			return false
 		}
@@ -197,7 +208,7 @@ func (a *wagerAssessment) allows(c rules.Command) bool {
 			}
 			if a.headsUpDefense && c == (rules.Command{Type: "call", Kind: "truco", Amount: 3}) &&
 				v.TrucoValue == 1 && v.Mano == a.seat && !v.FlorValid && headsUpLead(v, a.seat) &&
-				v.Config.Target-max(v.Scores[0], v.Scores[1]) > 3 {
+				v.Config.Target-max(v.Scores[0], v.Scores[1]) > 3 && (!a.priceHeadsUp || v.Scores[a.seat%2] <= v.Scores[1-a.seat%2]) {
 				a.openingBluff = true
 				return true
 			}
@@ -214,6 +225,15 @@ func (a *wagerAssessment) allows(c rules.Command) bool {
 	}
 	if kind != "envido" && kind != "ley_envido" && kind != "flor" {
 		return true
+	}
+	// A cheap plain envido can be a steal. Keep the call available with
+	// sufficient showdown equity even when the actor learned to fold.
+	if a.priceHeadsUp && kind == "envido" && c.Type == "respond" && c.Kind == "decline" && c.Mode == "" {
+		odds := a.estimate()
+		if odds.ordinaryDeals > 0 && v.Pending != nil && (v.Pending.Previous >= v.Config.Target-v.Scores[1-a.seat%2] ||
+			v.Pending.Value == 2 && v.Pending.Previous == 1 && odds.ordinaryWins*100 >= 40*odds.ordinaryDeals) {
+			return false
+		}
 	}
 	if c.Type != "call" && c.Kind != "raise" && c.Kind != "falta" && c.Kind != "accept" {
 		return true
@@ -267,6 +287,14 @@ func (a *wagerAssessment) allows(c rules.Command) bool {
 		return wins*2 > deals
 	}
 	opponentNeeds := v.Config.Target - v.Scores[1-a.seat%2]
+	if a.priceHeadsUp && kind == "envido" && v.Pending != nil {
+		ours := v.Config.Target - v.Scores[a.seat%2]
+		// Once accepting already pays enough to finish, offering more only
+		// lets a weaker rival decline or a stronger rival charge us more.
+		if v.Pending.Value >= ours || c.Kind == "raise" && c.Amount > ours-v.Pending.Value {
+			return false
+		}
+	}
 	if deals == 0 {
 		return false
 	}

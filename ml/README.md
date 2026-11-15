@@ -53,7 +53,7 @@ From `ml/`, export a supported recurrent checkpoint with the same choice policy 
 ```sh
 uv run --locked python -m retruco_ml.bundle "$CHECKPOINT" runs/browser-candidate \
   --training-snapshot "$TRAINING_SNAPSHOT" --team-play closing-card-and-flor-v2 \
-  --choice-policy value-and-team-v9
+  --choice-policy value-and-team-v10
 ```
 
 The bundle contains a quantized actor, the WASM evaluator, and a manifest with their hashes and source identity. Use the frontend's [local CPU preview instructions](https://github.com/neiam00/retruco-webapp#local-cpu-evaluation) to play it. Production loading requires an approved bundle. Keep the corresponding simulator, training source revision, lockfile and checkpoint together for later verification.

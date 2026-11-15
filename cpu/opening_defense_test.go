@@ -21,6 +21,9 @@ func TestHeadsUpOpeningBluffIsAnOrdinaryAffordableTruco(t *testing.T) {
 	assert.Contains(t, choices, bid)
 	assert.NotContains(t, choices, envido)
 	assert.NotContains(t, choices, allIn)
+	v.Scores[0] = 2
+	assert.NotContains(t, cpu.PlayingChoices(v, 0), bid, "protect a lead on a weak opening")
+	assert.Contains(t, cpu.ChoicesForProfile(v, 0, cpu.RetrucoLadderProfile), bid)
 	v.Scores[1] = v.Config.Target - 3
 	assert.NotContains(t, cpu.PlayingChoices(v, 0), bid)
 }
@@ -46,4 +49,14 @@ func TestHeadsUpAgainstVoluntaryPegadoPricesTheHiddenBottom(t *testing.T) {
 	v.Scores[1] = 0
 	v.Hand[2].Card = rules.Card{Suit: rules.Coins, Number: 11}
 	assert.Equal(t, []rules.Command{accept}, cpu.PlayingChoices(v, 0), "the perico beats every possible hidden bottom")
+}
+
+func TestHeadsUpEnvidoAtMatchPoint(t *testing.T) {
+	v := table(t, 2, 0, [3]rules.Card{{Suit: rules.Cups, Number: 7}, {Suit: rules.Cups, Number: 6}, {Suit: rules.Clubs, Number: 4}})
+	v.Scores[0] = v.Config.Target - 2
+	v.Pending = &rules.Wager{Kind: "envido", Caller: 1, Value: 2, Previous: 1}
+	accept := rules.Command{Type: "respond", Kind: "accept"}
+	decline := rules.Command{Type: "respond", Kind: "decline"}
+	v.Legal = []rules.Command{decline, accept, {Type: "respond", Kind: "raise", Amount: 2}, {Type: "respond", Kind: "falta"}}
+	require.Equal(t, []rules.Command{accept}, cpu.PlayingChoices(v, 0), "take the two points on offer with a strong pair")
 }
