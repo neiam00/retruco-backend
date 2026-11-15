@@ -1,0 +1,197 @@
+{
+  "version": "2",
+  "revision": 13,
+  "config": {
+    "players": 4,
+    "target": 24,
+    "florRequired": true
+  },
+  "phase": "playing",
+  "handNumber": 1,
+  "dealer": 1,
+  "mano": 2,
+  "turn": 3,
+  "round": 1,
+  "vira": {
+    "suit": "clubs",
+    "number": 1
+  },
+  "seats": [
+    {
+      "seat": 0,
+      "team": 0,
+      "remaining": 2,
+      "plays": [
+        {
+          "card": {
+            "suit": "cups",
+            "number": 5
+          },
+          "present": true,
+          "burned": false,
+          "concealed": false
+        },
+        {
+          "present": false,
+          "burned": false,
+          "concealed": false
+        },
+        {
+          "present": false,
+          "burned": false,
+          "concealed": false
+        }
+      ]
+    },
+    {
+      "seat": 1,
+      "team": 1,
+      "remaining": 2,
+      "plays": [
+        {
+          "card": {
+            "suit": "clubs",
+            "number": 4
+          },
+          "present": true,
+          "burned": false,
+          "concealed": false
+        },
+        {
+          "present": false,
+          "burned": false,
+          "concealed": false
+        },
+        {
+          "present": false,
+          "burned": false,
+          "concealed": false
+        }
+      ]
+    },
+    {
+      "seat": 2,
+      "team": 0,
+      "remaining": 1,
+      "plays": [
+        {
+          "card": {
+            "suit": "coins",
+            "number": 1
+          },
+          "present": true,
+          "burned": false,
+          "concealed": false
+        },
+        {
+          "card": {
+            "suit": "clubs",
+            "number": 11
+          },
+          "present": true,
+          "burned": false,
+          "concealed": false
+        },
+        {
+          "present": false,
+          "burned": false,
+          "concealed": false
+        }
+      ]
+    },
+    {
+      "seat": 3,
+      "team": 1,
+      "remaining": 2,
+      "plays": [
+        {
+          "card": {
+            "suit": "cups",
+            "number": 11
+          },
+          "present": true,
+          "burned": false,
+          "concealed": false
+        },
+        {
+          "present": false,
+          "burned": false,
+          "concealed": false
+        },
+        {
+          "present": false,
+          "burned": false,
+          "concealed": false
+        }
+      ]
+    }
+  ],
+  "hand": [
+    {
+      "index": 0,
+      "card": {
+        "suit": "cups",
+        "number": 12
+      },
+      "used": false
+    },
+    {
+      "index": 1,
+      "card": {
+        "suit": "cups",
+        "number": 5
+      },
+      "used": true
+    },
+    {
+      "index": 2,
+      "card": {
+        "suit": "clubs",
+        "number": 2
+      },
+      "used": false
+    }
+  ],
+  "preview": {
+    "suit": "spades",
+    "number": 3
+  },
+  "holding": {
+    "envido": 25,
+    "flor": 0,
+    "receta": false
+  },
+  "florValid": false,
+  "scores": [
+    0,
+    0
+  ],
+  "winner": -1,
+  "handWinner": -1,
+  "pending": {
+    "kind": "truco",
+    "caller": 1,
+    "value": 100,
+    "previous": 3,
+    "terminal": false
+  },
+  "trucoValue": 3,
+  "mandatoryStack": false,
+  "legal": [
+    {
+      "type": "respond",
+      "kind": "accept"
+    },
+    {
+      "type": "respond",
+      "kind": "decline"
+    }
+  ],
+  "payouts": [],
+  "envidoResults": [],
+  "privando": [
+    false,
+    false
+  ],
+  "privoEnvido": []
+}

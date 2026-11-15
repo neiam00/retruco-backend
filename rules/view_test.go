@@ -60,3 +60,19 @@ func TestLegalActionsKeepTeammateResponsesAndTrucoInterruptions(t *testing.T) {
 		}
 	}
 }
+
+func TestViewIdentifiesOnlyAnnouncedFlores(t *testing.T) {
+	s := fixture(t, true,
+		[3]rules.Card{{rules.Coins, 1}, {rules.Clubs, 2}, {rules.Cups, 3}},
+		[3]rules.Card{{rules.Cups, 7}, {rules.Cups, 6}, {rules.Cups, 5}},
+	)
+	for _, announcement := range []string{"a_ley", "flor"} {
+		t.Run(announcement, func(t *testing.T) {
+			require.True(t, s.Players[1].FlorValid)
+			assert.False(t, rules.ViewFor(s, 0, false).Seats[1].FlorDeclared)
+			next := apply(t, s, 1, rules.Command{Type: "play", Card: 0, Declaration: announcement})
+			assert.Equal(t, announcement == "flor", rules.ViewFor(next, 0, false).Seats[1].FlorDeclared)
+			assert.Equal(t, announcement == "flor", rules.ViewFor(next, -1, true).Seats[1].FlorDeclared)
+		})
+	}
+}

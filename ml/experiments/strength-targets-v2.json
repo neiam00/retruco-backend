@@ -1,0 +1,27 @@
+{
+  "version": 2,
+  "opponent": "frozen native CPU",
+  "mode_win_rate_targets": {
+    "1v1": 0.7,
+    "2v2": 0.6
+  },
+  "criterion": "Per-mode point estimate at or above target, paired95%CI reported and lower bound above50%; no pooling across modes",
+  "release_minimum_pairs_per_rules_configuration": 2000,
+  "configurations": {
+    "score_targets": [
+      12,
+      24
+    ],
+    "flor": [
+      false,
+      true
+    ]
+  },
+  "two_player_role": "one learned CPU",
+  "four_player_roles": [
+    "two learned CPU teammates",
+    "learned CPU with literal/trusting/cautious/reference-human partner policies, reported separately"
+  ],
+  "release_gates_unchanged_except_strength_targets": true,
+  "four_player_primary_target": "equal macro across literal-v2/trusting-v2/cautious-v2/reference-human human-role partners; CPU-only and contextual-v3 diagnostics separate"
+}

@@ -27,10 +27,10 @@ passes both values only to the API container. Set both or neither: incomplete
 configuration prevents API startup. With neither set, local development can
 still use direct peer connections, but production audio may fail across NATs.
 
-Deploy the updated backend through the normal deployment workflow. After changing
+Use the [manual upgrade procedure](../DEPLOYMENT-VPS.md#upgrading-an-existing-server) when deploying new backend code. After changing
 only the token values, recreate the API and refresh NGINX's upstream resolution.
 For installations using the Compose helper described in the
-[deployment notes](GITHUB-ACTIONS.md):
+[VPS guide](../DEPLOYMENT-VPS.md):
 
 ```sh
 retruco-compose up -d --no-deps api

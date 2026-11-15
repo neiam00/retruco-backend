@@ -1,0 +1,297 @@
+{
+  "version": 1,
+  "max_wall_hours": 6,
+  "recipes": {
+    "U95": {
+      "gae_lambda": 0.95,
+      "reactive": false
+    },
+    "U99": {
+      "gae_lambda": 0.99,
+      "reactive": false
+    },
+    "R95": {
+      "gae_lambda": 0.95,
+      "reactive": true
+    },
+    "R99": {
+      "gae_lambda": 0.99,
+      "reactive": true
+    }
+  },
+  "discovery_seeds": [
+    201,
+    202,
+    203
+  ],
+  "confirmation_seeds": [
+    301,
+    302,
+    303
+  ],
+  "discovery_choices": 250000,
+  "confirmation_checkpoints": [
+    250000,
+    500000,
+    750000
+  ],
+  "steps": 8192,
+  "workers": 8,
+  "environments": 32,
+  "batch_size": 64,
+  "warmup_max": 8,
+  "calibration_choices": 2048,
+  "memory_gib": 8,
+  "source_pairs": 16,
+  "source_seed": 193000,
+  "discovery_pairs": 16,
+  "discovery_seed": 194000,
+  "selection_pairs": 32,
+  "selection_seed": 195000,
+  "confirmation_pairs": 128,
+  "confirmation_seed": 197000,
+  "ablation_pairs": 64,
+  "ablation_seed": 199000,
+  "screen_specs": [
+    {
+      "id": "native-literal-v2",
+      "opponent": "native",
+      "partner": "literal-v2",
+      "players": 4,
+      "weight": 0.25,
+      "guard": true
+    },
+    {
+      "id": "native-reference-human",
+      "opponent": "native",
+      "partner": "reference-human",
+      "players": 4,
+      "weight": 0.25,
+      "guard": true
+    },
+    {
+      "id": "parent-literal-v2",
+      "opponent": "parent",
+      "partner": "literal-v2",
+      "players": 4,
+      "weight": 0.125,
+      "guard": true
+    },
+    {
+      "id": "parent-reference-human",
+      "opponent": "parent",
+      "partner": "reference-human",
+      "players": 4,
+      "weight": 0.125,
+      "guard": true
+    },
+    {
+      "id": "reactive-literal-v2",
+      "opponent": "reactive",
+      "partner": "literal-v2",
+      "players": 4,
+      "weight": 0.125,
+      "guard": false
+    },
+    {
+      "id": "reactive-reference-human",
+      "opponent": "reactive",
+      "partner": "reference-human",
+      "players": 4,
+      "weight": 0.125,
+      "guard": false
+    },
+    {
+      "id": "native-headsup",
+      "opponent": "native",
+      "partner": "reference-cpu",
+      "players": 2,
+      "weight": 0,
+      "guard": true
+    },
+    {
+      "id": "parent-headsup",
+      "opponent": "parent",
+      "partner": "reference-cpu",
+      "players": 2,
+      "weight": 0,
+      "guard": true
+    }
+  ],
+  "final_specs": [
+    {
+      "id": "native-literal-v2",
+      "opponent": "native",
+      "partner": "literal-v2",
+      "players": 4,
+      "weight": 0.125,
+      "guard": true
+    },
+    {
+      "id": "native-reference-human",
+      "opponent": "native",
+      "partner": "reference-human",
+      "players": 4,
+      "weight": 0.125,
+      "guard": true
+    },
+    {
+      "id": "native-trusting-v2",
+      "opponent": "native",
+      "partner": "trusting-v2",
+      "players": 4,
+      "weight": 0.125,
+      "guard": true
+    },
+    {
+      "id": "native-cautious-v2",
+      "opponent": "native",
+      "partner": "cautious-v2",
+      "players": 4,
+      "weight": 0.125,
+      "guard": true
+    },
+    {
+      "id": "parent-literal-v2",
+      "opponent": "parent",
+      "partner": "literal-v2",
+      "players": 4,
+      "weight": 0.0625,
+      "guard": true
+    },
+    {
+      "id": "parent-reference-human",
+      "opponent": "parent",
+      "partner": "reference-human",
+      "players": 4,
+      "weight": 0.0625,
+      "guard": true
+    },
+    {
+      "id": "parent-trusting-v2",
+      "opponent": "parent",
+      "partner": "trusting-v2",
+      "players": 4,
+      "weight": 0.0625,
+      "guard": true
+    },
+    {
+      "id": "parent-cautious-v2",
+      "opponent": "parent",
+      "partner": "cautious-v2",
+      "players": 4,
+      "weight": 0.0625,
+      "guard": true
+    },
+    {
+      "id": "reactive-literal-v2",
+      "opponent": "reactive",
+      "partner": "literal-v2",
+      "players": 4,
+      "weight": 0.0625,
+      "guard": false
+    },
+    {
+      "id": "reactive-reference-human",
+      "opponent": "reactive",
+      "partner": "reference-human",
+      "players": 4,
+      "weight": 0.0625,
+      "guard": false
+    },
+    {
+      "id": "reactive-trusting-v2",
+      "opponent": "reactive",
+      "partner": "trusting-v2",
+      "players": 4,
+      "weight": 0.0625,
+      "guard": false
+    },
+    {
+      "id": "reactive-cautious-v2",
+      "opponent": "reactive",
+      "partner": "cautious-v2",
+      "players": 4,
+      "weight": 0.0625,
+      "guard": false
+    },
+    {
+      "id": "native-headsup",
+      "opponent": "native",
+      "partner": "reference-cpu",
+      "players": 2,
+      "weight": 0,
+      "guard": true
+    },
+    {
+      "id": "parent-headsup",
+      "opponent": "parent",
+      "partner": "reference-cpu",
+      "players": 2,
+      "weight": 0,
+      "guard": true
+    },
+    {
+      "id": "reactive-headsup",
+      "opponent": "reactive",
+      "partner": "reference-cpu",
+      "players": 2,
+      "weight": 0,
+      "guard": true
+    },
+    {
+      "id": "independent-literal-v2",
+      "opponent": "independent",
+      "partner": "literal-v2",
+      "players": 4,
+      "weight": 0,
+      "guard": false
+    },
+    {
+      "id": "independent-reference-human",
+      "opponent": "independent",
+      "partner": "reference-human",
+      "players": 4,
+      "weight": 0,
+      "guard": false
+    },
+    {
+      "id": "native-independent-partner",
+      "opponent": "native",
+      "partner": "independent-partner",
+      "players": 4,
+      "weight": 0,
+      "guard": false
+    },
+    {
+      "id": "parent-independent-partner",
+      "opponent": "parent",
+      "partner": "independent-partner",
+      "players": 4,
+      "weight": 0,
+      "guard": false
+    },
+    {
+      "id": "resistant-literal-v2",
+      "opponent": "resistant",
+      "partner": "literal-v2",
+      "players": 4,
+      "weight": 0,
+      "guard": false
+    },
+    {
+      "id": "resistant-reference-human",
+      "opponent": "resistant",
+      "partner": "reference-human",
+      "players": 4,
+      "weight": 0,
+      "guard": false
+    }
+  ],
+  "signal_policy": "truthful-cpu-v1",
+  "reward": "terminal match win/loss only",
+  "actor_architecture": "LSTM16 shared actor; centralized training-only critic; 91463 deployed parameters",
+  "selection": "freeze source and recipe on development sets, select each fresh seed checkpoint and one nominee before independent confirmation; never approve a model automatically",
+  "card_ablation_seed": 198000,
+  "evaluation_workers": 4
+}

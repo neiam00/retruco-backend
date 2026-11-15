@@ -1,0 +1,202 @@
+{
+  "version": 2,
+  "cell": "lstm",
+  "profiles": [
+    "gae99",
+    "mc"
+  ],
+  "seeds": [
+    4101,
+    4102,
+    4103
+  ],
+  "parent_sources": {
+    "4101": {
+      "file": "4101.pt",
+      "origin": "ml/runs/rmappo-target-continuation-v1/trials/target-3102/endpoints/choices-1000000.pt",
+      "sha256": "b7f5fc4b58d06eac09a8736dd4d6e5808a4a417441a6fa8143b78980e1cec3da",
+      "original_seed": 3102,
+      "original_choices": 1000823,
+      "ancestor_choices": 2250977,
+      "total_ancestral_choices": 3251800
+    },
+    "4102": {
+      "file": "4102.pt",
+      "origin": "ml/runs/rmappo-target-continuation-v1/trials/target-3102/endpoints/choices-1000000.pt",
+      "sha256": "b7f5fc4b58d06eac09a8736dd4d6e5808a4a417441a6fa8143b78980e1cec3da",
+      "original_seed": 3102,
+      "original_choices": 1000823,
+      "ancestor_choices": 2250977,
+      "total_ancestral_choices": 3251800
+    },
+    "4103": {
+      "file": "4103.pt",
+      "origin": "ml/runs/rmappo-target-continuation-v1/trials/target-3102/endpoints/choices-1000000.pt",
+      "sha256": "b7f5fc4b58d06eac09a8736dd4d6e5808a4a417441a6fa8143b78980e1cec3da",
+      "original_seed": 3102,
+      "original_choices": 1000823,
+      "ancestor_choices": 2250977,
+      "total_ancestral_choices": 3251800
+    }
+  },
+  "mode_win_rate_targets": {
+    "1v1": 0.7,
+    "2v2": 0.6
+  },
+  "budgets": [
+    500000,
+    1000000,
+    2000000
+  ],
+  "save_every": 250000,
+  "steps": 8192,
+  "environments": 32,
+  "workers": 8,
+  "batch_size": 512,
+  "warmups": 3,
+  "warmup_choices": 8192,
+  "evaluation_workers": 4,
+  "max_wall_hours": 12,
+  "evaluation_reserve_hours": 4,
+  "selection_pairs": 64,
+  "selection_seed": 132000,
+  "selection_diagnostic_pairs": 32,
+  "selection_diagnostic_seed": 133000,
+  "final_pairs": 2000,
+  "final_seed": 157000,
+  "final_diagnostic_pairs": 128,
+  "final_diagnostic_seed": 159500,
+  "primary_specs": [
+    {
+      "id": "native-headsup",
+      "opponent": "native",
+      "partner": "reference-cpu",
+      "players": 2
+    },
+    {
+      "id": "native-literal-v2",
+      "opponent": "native",
+      "partner": "literal-v2",
+      "players": 4
+    },
+    {
+      "id": "native-trusting-v2",
+      "opponent": "native",
+      "partner": "trusting-v2",
+      "players": 4
+    },
+    {
+      "id": "native-cautious-v2",
+      "opponent": "native",
+      "partner": "cautious-v2",
+      "players": 4
+    },
+    {
+      "id": "native-reference-human",
+      "opponent": "native",
+      "partner": "reference-human",
+      "players": 4
+    }
+  ],
+  "diagnostic_specs": [
+    {
+      "id": "parent-headsup",
+      "opponent": "parent",
+      "partner": "reference-cpu",
+      "players": 2
+    },
+    {
+      "id": "parent-literal-v2",
+      "opponent": "parent",
+      "partner": "literal-v2",
+      "players": 4
+    },
+    {
+      "id": "parent-reference-human",
+      "opponent": "parent",
+      "partner": "reference-human",
+      "players": 4
+    },
+    {
+      "id": "native-independent-partner",
+      "opponent": "native",
+      "partner": "independent-partner",
+      "players": 4
+    },
+    {
+      "id": "parent-independent-partner",
+      "opponent": "parent",
+      "partner": "independent-partner",
+      "players": 4
+    },
+    {
+      "id": "resistant-literal-v2",
+      "opponent": "resistant",
+      "partner": "literal-v2",
+      "players": 4
+    },
+    {
+      "id": "native-literal-v3",
+      "opponent": "native",
+      "partner": "literal-v3",
+      "players": 4
+    },
+    {
+      "id": "native-trusting-v3",
+      "opponent": "native",
+      "partner": "trusting-v3",
+      "players": 4
+    },
+    {
+      "id": "native-cautious-v3",
+      "opponent": "native",
+      "partner": "cautious-v3",
+      "players": 4
+    }
+  ],
+  "smoke": false,
+  "regression_margin": 0.02,
+  "scope": "Corrected-rule RMAPPO continuation; three fresh seeds from the same screened strongest eligible starter. GAE .99 versus full-match returns; all population/rule/calibration/response-guard settings common. Frozen nominee before 2000-pair final benchmark; no release approval.",
+  "training_objective": "terminal team match +/-1; genuine choices only; compare lambda .99 versus 1.0 with common exact response KL stop/rollback",
+  "target_population": {
+    "native_opponents": 0.75,
+    "historical_opponents": 0.2,
+    "fixed_opponents": 0.05,
+    "headsup_matches": 0.4,
+    "teammates": {
+      "joint_learner": 0.2,
+      "frozen_cpu": 0.02,
+      "reference_human": 0.3,
+      "each_literal_trusting_cautious_v2_v3": 0.08
+    }
+  },
+  "checkpoint_policy": "Preserve full checkpoints every250,000 additional choices; select only completed common500k/1m/2m milestones, with actual overshoot recorded.",
+  "response_kl_stop": 0.03,
+  "response_kl_rollback": 0.05,
+  "carried_seconds": 1394.8574450016022,
+  "starter_screen": {
+    "choice_path": "ml/runs/retraining-starter-screen-v1/starter-choice.json",
+    "screened_models": 13,
+    "shortlist_models": 3,
+    "screen_pairs": 64,
+    "recheck_pairs": 256,
+    "selection": "highest weaker normalized mode among eligible RMAPPO finalists",
+    "approved": false
+  },
+  "corrected_simulator": {
+    "cantos": "authoritative contextual declarations and flor eligibility",
+    "signals": "none-only in 1v1; truthful optional team signals in 2v2",
+    "native_opponent": "publicly proven deciding-perico wins accepted, proven losses declined; no hidden information"
+  },
+  "guard_semantics": "Exact forward KL from pre-update legal distribution, aggregate responses and response families with >=32 genuine choices. Stop actor at .03, restore epoch actor+Adam at .05; critic keeps learning.",
+  "report_reuse": "Identical checkpoint SHA and identical protocol/deals evaluated once; duplicated parent report paths are aliases, never independent samples.",
+  "remaining_model_needs": [
+    "corrected-rule final strength confirmation",
+    "all-in public-loss behavior case",
+    "weak-envido and partner card conservation review",
+    "signal usefulness",
+    "human compatibility",
+    "quantization/browser parity for any new weights"
+  ],
+  "preparation_allowance_seconds": 120
+}

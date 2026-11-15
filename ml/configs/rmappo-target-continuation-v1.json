@@ -1,0 +1,174 @@
+{
+  "version": 1,
+  "cell": "lstm",
+  "profiles": [
+    "original",
+    "target"
+  ],
+  "seeds": [
+    3101,
+    3102,
+    3103
+  ],
+  "parent_sources": {
+    "3101": {
+      "file": "3101.pt",
+      "origin": "ml/runs/rmappo-cooperation-controls-v1/trials/A-2101/candidate.pt",
+      "sha256": "9af65791ba35523eb6d379b4db79687389362e7611c568be42034ad1eae053ce",
+      "original_seed": 2101,
+      "original_choices": 250550,
+      "ancestor_choices": 2000470,
+      "total_ancestral_choices": 2251020
+    },
+    "3102": {
+      "file": "3102.pt",
+      "origin": "ml/runs/rmappo-cooperation-controls-v1/trials/A-2102/candidate.pt",
+      "sha256": "f2b33bd39abacb2dbccfedf7cba109f65e81a22b9a64e3cad6e7d755f97e52c7",
+      "original_seed": 2102,
+      "original_choices": 250613,
+      "ancestor_choices": 2000364,
+      "total_ancestral_choices": 2250977
+    },
+    "3103": {
+      "file": "3103.pt",
+      "origin": "ml/runs/rmappo-cooperation-controls-v1/trials/A-2103/candidate.pt",
+      "sha256": "d99008ab932f756cd71d8e409668cf665b93bed502b1f63d487e4b568798012e",
+      "original_seed": 2103,
+      "original_choices": 250915,
+      "ancestor_choices": 2000575,
+      "total_ancestral_choices": 2251490
+    }
+  },
+  "mode_win_rate_targets": {
+    "1v1": 0.7,
+    "2v2": 0.6
+  },
+  "budgets": [
+    500000,
+    1000000,
+    2000000
+  ],
+  "save_every": 250000,
+  "steps": 8192,
+  "environments": 32,
+  "workers": 8,
+  "batch_size": 512,
+  "warmups": 2,
+  "warmup_choices": 2048,
+  "evaluation_workers": 4,
+  "max_wall_hours": 12,
+  "evaluation_reserve_hours": 4,
+  "selection_pairs": 64,
+  "selection_seed": 135000,
+  "selection_diagnostic_pairs": 32,
+  "selection_diagnostic_seed": 136000,
+  "final_pairs": 2000,
+  "final_seed": 137000,
+  "final_diagnostic_pairs": 128,
+  "final_diagnostic_seed": 140000,
+  "primary_specs": [
+    {
+      "id": "native-headsup",
+      "opponent": "native",
+      "partner": "reference-cpu",
+      "players": 2
+    },
+    {
+      "id": "native-literal-v2",
+      "opponent": "native",
+      "partner": "literal-v2",
+      "players": 4
+    },
+    {
+      "id": "native-trusting-v2",
+      "opponent": "native",
+      "partner": "trusting-v2",
+      "players": 4
+    },
+    {
+      "id": "native-cautious-v2",
+      "opponent": "native",
+      "partner": "cautious-v2",
+      "players": 4
+    },
+    {
+      "id": "native-reference-human",
+      "opponent": "native",
+      "partner": "reference-human",
+      "players": 4
+    }
+  ],
+  "diagnostic_specs": [
+    {
+      "id": "parent-headsup",
+      "opponent": "parent",
+      "partner": "reference-cpu",
+      "players": 2
+    },
+    {
+      "id": "parent-literal-v2",
+      "opponent": "parent",
+      "partner": "literal-v2",
+      "players": 4
+    },
+    {
+      "id": "parent-reference-human",
+      "opponent": "parent",
+      "partner": "reference-human",
+      "players": 4
+    },
+    {
+      "id": "native-independent-partner",
+      "opponent": "native",
+      "partner": "independent-partner",
+      "players": 4
+    },
+    {
+      "id": "parent-independent-partner",
+      "opponent": "parent",
+      "partner": "independent-partner",
+      "players": 4
+    },
+    {
+      "id": "resistant-literal-v2",
+      "opponent": "resistant",
+      "partner": "literal-v2",
+      "players": 4
+    },
+    {
+      "id": "native-literal-v3",
+      "opponent": "native",
+      "partner": "literal-v3",
+      "players": 4
+    },
+    {
+      "id": "native-trusting-v3",
+      "opponent": "native",
+      "partner": "trusting-v3",
+      "players": 4
+    },
+    {
+      "id": "native-cautious-v3",
+      "opponent": "native",
+      "partner": "cautious-v3",
+      "players": 4
+    }
+  ],
+  "smoke": false,
+  "regression_margin": 0.02,
+  "scope": "Continued RMAPPO from all three saved ordinary-control endpoints. Original versus target collection only; fixed native benchmark; no teacher KL or loss weighting. Nominee frozen before fresh confirmation. No release approval.",
+  "training_objective": "terminal team match +/-1; unchanged PPO",
+  "target_population": {
+    "native_opponents": 0.75,
+    "historical_opponents": 0.2,
+    "fixed_opponents": 0.05,
+    "headsup_matches": 0.4,
+    "teammates": {
+      "joint_learner": 0.2,
+      "frozen_cpu": 0.02,
+      "reference_human": 0.3,
+      "each_literal_trusting_cautious_v2_v3": 0.08
+    }
+  },
+  "checkpoint_policy": "Preserve full checkpoints every250,000 additional choices; select only completed common500k/1m/2m milestones, with actual overshoot recorded."
+}

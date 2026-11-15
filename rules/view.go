@@ -8,10 +8,11 @@ type PublicPlay struct {
 }
 
 type SeatView struct {
-	Seat      int           `json:"seat"`
-	Team      int           `json:"team"`
-	Remaining int           `json:"remaining"`
-	Plays     [3]PublicPlay `json:"plays"`
+	FlorDeclared bool          `json:"florDeclared,omitempty"` // Public announcement in this hand, including a las flores no.
+	Seat         int           `json:"seat"`
+	Team         int           `json:"team"`
+	Remaining    int           `json:"remaining"`
+	Plays        [3]PublicPlay `json:"plays"`
 }
 
 type HandCard struct {
@@ -77,7 +78,7 @@ func ViewFor(s State, perspective int, spectator bool) View {
 	}
 	for seat := 0; seat < s.Config.Players; seat++ {
 		player := s.Players[seat]
-		sv := SeatView{Seat: seat, Team: s.Team(seat), Remaining: len(s.Remaining(seat))}
+		sv := SeatView{Seat: seat, Team: s.Team(seat), FlorDeclared: player.FlorDeclared, Remaining: len(s.Remaining(seat))}
 		for round, play := range player.Plays {
 			pv := PublicPlay{Present: play.Present, Burned: play.Burned, Concealed: play.Concealed}
 			if play.Present && !play.Burned && !play.Concealed {

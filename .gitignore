@@ -9,3 +9,5 @@ __pycache__/
 *.pyc
 /RULES-DECISIONS.md
 /VERIFICATION.md
+
+.ruff_cache/

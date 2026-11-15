@@ -6,5 +6,7 @@
 bin
 coverage.out
 **/__pycache__
-# CI checks bind-mount the full checkout; production builds need no test files.
+# The Go server image only needs application sources.
+ml
+**/.ruff_cache
 **/*_test.go

@@ -1,0 +1,31 @@
+{
+  "experiment": "partner-pilots-v1",
+  "purpose": "Continue two independently seeded heads-up pilots in mixed 1v1/2v2 play to evaluate collaboration with team-trained partners, alongside the main curriculum.",
+  "approved": false,
+  "main_curriculum_unchanged": true,
+  "training_source_commit": "b9ce54977ace3d3a5a5d184bd377328f37327969",
+  "schedule": "One hour per seed, sequential; preserve each original run and checkpoint.",
+  "additional_hours_per_seed": 1,
+  "players": 0,
+  "workers": 4,
+  "environments": 32,
+  "device": "cpu",
+  "memory_gib": 4,
+  "ipc": "binary",
+  "learner_decisions_per_update": 8192,
+  "seeds": [
+    {
+      "seed": 42,
+      "parent_checkpoint_sha256": "a5ffa414cbd980e1c3d415217e7a797b40a002b3bb2e1dde3f3b359398b42c6c",
+      "parent_update": 448
+    },
+    {
+      "seed": 44,
+      "parent_checkpoint_sha256": "ee6be2883b8dca9bf1e367c683dd3edf200d41574da6c22ceaf37b8c0c3e5a58",
+      "parent_update": 465
+    }
+  ],
+  "independence": "These retain distinct initial training seeds and their own optimizer, random states and opponent pools. Neither descends from seed 43 or is trained against the selected candidate.",
+  "resume": "Use upgrade_run on each original pilots-v2/seed-N directory; run retruco_ml.train --resume from the new source/ml directory with the absolute virtualenv Python and output paths, --hours 1 --players 0 --seed N --workers 4 --environments 32 --device cpu --memory-gib 4 --ipc binary. Resume an interrupted job with only its remaining time budget.",
+  "evaluation": "Validation seeds only initially; compare team win rates and cross-play with the main candidate. Do not treat one-hour continuations as release evidence or automatically promote any model."
+}

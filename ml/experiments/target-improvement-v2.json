@@ -1,0 +1,231 @@
+{
+  "version": 2,
+  "steps": 8192,
+  "workers": 8,
+  "environments": 32,
+  "batch_size": 64,
+  "calibration_choices": 2048,
+  "warmup_max": 4,
+  "memory_gib": 8,
+  "evaluation_workers": 4,
+  "actor_memory": 64,
+  "heldout_parent": 103,
+  "critic_hidden": [
+    256,
+    128
+  ],
+  "league_interval": 50000,
+  "parent_anchor": 0.01,
+  "response_anchor": 0.1,
+  "signal_anchor": 0.05,
+  "primary_specs": [
+    {
+      "id": "native-headsup",
+      "opponent": "native",
+      "partner": "reference-cpu",
+      "players": 2
+    },
+    {
+      "id": "native-literal-v2",
+      "opponent": "native",
+      "partner": "literal-v2",
+      "players": 4
+    },
+    {
+      "id": "native-trusting-v2",
+      "opponent": "native",
+      "partner": "trusting-v2",
+      "players": 4
+    },
+    {
+      "id": "native-cautious-v2",
+      "opponent": "native",
+      "partner": "cautious-v2",
+      "players": 4
+    },
+    {
+      "id": "native-reference-human",
+      "opponent": "native",
+      "partner": "reference-human",
+      "players": 4
+    }
+  ],
+  "diagnostic_specs": [
+    {
+      "id": "parent-headsup",
+      "opponent": "parent",
+      "partner": "reference-cpu",
+      "players": 2
+    },
+    {
+      "id": "parent-literal-v2",
+      "opponent": "parent",
+      "partner": "literal-v2",
+      "players": 4
+    },
+    {
+      "id": "parent-reference-human",
+      "opponent": "parent",
+      "partner": "reference-human",
+      "players": 4
+    },
+    {
+      "id": "native-independent-partner",
+      "opponent": "native",
+      "partner": "independent-partner",
+      "players": 4
+    },
+    {
+      "id": "parent-independent-partner",
+      "opponent": "parent",
+      "partner": "independent-partner",
+      "players": 4
+    },
+    {
+      "id": "resistant-literal-v2",
+      "opponent": "resistant",
+      "partner": "literal-v2",
+      "players": 4
+    },
+    {
+      "id": "native-literal-v3",
+      "opponent": "native",
+      "partner": "literal-v3",
+      "players": 4
+    },
+    {
+      "id": "native-trusting-v3",
+      "opponent": "native",
+      "partner": "trusting-v3",
+      "players": 4
+    },
+    {
+      "id": "native-cautious-v3",
+      "opponent": "native",
+      "partner": "cautious-v3",
+      "players": 4
+    }
+  ],
+  "mode_win_rate_targets": {
+    "1v1": 0.7,
+    "2v2": 0.6
+  },
+  "max_wall_hours": 12,
+  "recipes": {
+    "E01_SINGLE": {
+      "entropy_coef": 0.01,
+      "partner_pool": false
+    },
+    "E05_SINGLE": {
+      "entropy_coef": 0.05,
+      "partner_pool": false
+    },
+    "E01_POOL": {
+      "entropy_coef": 0.01,
+      "partner_pool": true
+    },
+    "E05_POOL": {
+      "entropy_coef": 0.05,
+      "partner_pool": true
+    }
+  },
+  "discovery_seeds": [
+    701,
+    702,
+    703
+  ],
+  "confirmation_seeds": [
+    801,
+    802,
+    803
+  ],
+  "discovery_choices": 250000,
+  "confirmation_checkpoints": [
+    500000,
+    1000000,
+    2000000
+  ],
+  "headsup_fraction": 0.4,
+  "discovery_pairs": 64,
+  "discovery_seed": 161000,
+  "diagnostic_pairs": 32,
+  "diagnostic_seed": 162000,
+  "selection_pairs": 64,
+  "selection_seed": 163000,
+  "final_pairs": 256,
+  "final_seed": 164000,
+  "ablation_pairs": 64,
+  "ablation_seed": 165000,
+  "signal_policy": "truthful-cpu-v1",
+  "reward": "terminal match win +1 / loss -1 only",
+  "starter": "exact frozen stronger legacy champion, widened policy/value preserving from16to64; fresh optimizers for new seeds",
+  "training_opponents": "50% native, 42.5% historical league, 7.5% inherited population; D103 reserved",
+  "selection": "Guarded both-target attainment first, then weaker normalized native mode, then 2v2. Equal 1v1/2v2 score remains descriptive. Full diagnostic checkpoint guards. Stop when no discovery recipe passes. Fresh seeds advance in equal budget rounds with two-hour final evaluation reserve.",
+  "scope": "Four contemporaneous recipes isolate entropy x learned-teammate diversity; contextual card-information partners common to all. No claims about benefit of unchanged or untested controls. Independent development confirmation; no release approval.",
+  "trainer_controls": {
+    "native_fraction": 0.5,
+    "gae_lambda": 0.99,
+    "entropy_coef": 0.01,
+    "sequence_length": 32,
+    "ppo_epochs": 4,
+    "target_kl": 0.015,
+    "clip_range": 0.2,
+    "actor_learning_rate": 0.0001,
+    "critic_learning_rate": 0.0001,
+    "actor_max_grad_norm": 0.5,
+    "critic_max_grad_norm": 0.5,
+    "extra_critic_epochs": 0,
+    "response_kl_target": 0.02,
+    "response_kl_stop": 0.03,
+    "response_kl_rollback": 0.05,
+    "response_min_choices": 32,
+    "league_anchor_fraction": 0.0,
+    "partner_policy_version": 3
+  },
+  "factorial_contrasts": {
+    "entropy": {
+      "E05_SINGLE": 0.5,
+      "E01_SINGLE": -0.5,
+      "E05_POOL": 0.5,
+      "E01_POOL": -0.5
+    },
+    "teammate_diversity": {
+      "E01_POOL": 0.5,
+      "E01_SINGLE": -0.5,
+      "E05_POOL": 0.5,
+      "E05_SINGLE": -0.5
+    },
+    "interaction": {
+      "E05_POOL": 1,
+      "E01_POOL": -1,
+      "E05_SINGLE": -1,
+      "E01_SINGLE": 1
+    }
+  },
+  "partner_pool_source": "../runs/pretraining-partners-v1/manifest.json",
+  "reserved_partner_sha256": [
+    "f70958ad56e0a7f2a7adc264c536e664189019bc626a5d9988e82b64432f5b88",
+    "20315d6dc5382a9df10e932b66e1148510bf9e8ab6c37640c5877bb6101c2ee2",
+    "5b245bd42df6715673408aaad93840f477ffeaffb7ade480f288256e36fb3d0e",
+    "a09301dba4ad9aa787ceb80cc2e784c5945ce82451b48f9a2732525ab8b9ff88",
+    "26796a9926a62f4ebe40c5ac00b0be5faadc9c71109f6b09550a4f999f854482",
+    "113d1a725e3aa0984826eec0981ec685a53387d028d91b812564180d3878bad5",
+    "6d2458c148f40abca92ec9e0a0b277442705dd46cb2e526a6689e01ed68776eb"
+  ],
+  "reserved_partner_fingerprints": [
+    "cb9c86b774621a119adf39d569deab2af251c1c653091d45d3b09d7b8a45ae3d",
+    "4adce1a046d6376ce9112b3e9b1e5e75d512d0bdaa6e2798eb88520850a6d296",
+    "500c59903c06e38bd2ced22a77d16608ea13616a2562ff66c1bee4983cb5fa0b",
+    "495910bf3465c54632371a36c78c59496309faa22462bd926e39503cf3c104ea",
+    "4c520605065c16650f46a7124be1dd4d0d5edcc9d4f27630f2d0bcc720f1f7ae",
+    "102e16f75187de6df4c3b10f8a16f2d958ff71b9376fc1bef242a33fafbadc84",
+    "a247485f52de81ac142fe761eb58b3ef73fd482ef0e5e3fe7f29d473d8ec3187"
+  ],
+  "ablation_modes": [
+    "normal",
+    "no-send",
+    "no-receive",
+    "no-partner-delivery"
+  ],
+  "validation_reserve_hours": 2
+}

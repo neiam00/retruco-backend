@@ -1,0 +1,249 @@
+{
+  "cell": "lstm",
+  "mode_win_rate_targets": {
+    "1v1": 0.7,
+    "2v2": 0.6
+  },
+  "save_every": 250000,
+  "steps": 8192,
+  "environments": 32,
+  "workers": 8,
+  "batch_size": 512,
+  "warmups": 3,
+  "warmup_choices": 8192,
+  "evaluation_workers": 4,
+  "max_wall_hours": 12,
+  "primary_specs": [
+    {
+      "id": "native-headsup",
+      "opponent": "native",
+      "partner": "reference-cpu",
+      "players": 2
+    },
+    {
+      "id": "native-literal-v2",
+      "opponent": "native",
+      "partner": "literal-v2",
+      "players": 4
+    },
+    {
+      "id": "native-trusting-v2",
+      "opponent": "native",
+      "partner": "trusting-v2",
+      "players": 4
+    },
+    {
+      "id": "native-cautious-v2",
+      "opponent": "native",
+      "partner": "cautious-v2",
+      "players": 4
+    },
+    {
+      "id": "native-reference-human",
+      "opponent": "native",
+      "partner": "reference-human",
+      "players": 4
+    }
+  ],
+  "diagnostic_specs": [
+    {
+      "id": "parent-headsup",
+      "opponent": "parent",
+      "partner": "reference-cpu",
+      "players": 2
+    },
+    {
+      "id": "parent-literal-v2",
+      "opponent": "parent",
+      "partner": "literal-v2",
+      "players": 4
+    },
+    {
+      "id": "parent-reference-human",
+      "opponent": "parent",
+      "partner": "reference-human",
+      "players": 4
+    },
+    {
+      "id": "native-independent-partner",
+      "opponent": "native",
+      "partner": "independent-partner",
+      "players": 4
+    },
+    {
+      "id": "parent-independent-partner",
+      "opponent": "parent",
+      "partner": "independent-partner",
+      "players": 4
+    },
+    {
+      "id": "resistant-literal-v2",
+      "opponent": "resistant",
+      "partner": "literal-v2",
+      "players": 4
+    },
+    {
+      "id": "native-literal-v3",
+      "opponent": "native",
+      "partner": "literal-v3",
+      "players": 4
+    },
+    {
+      "id": "native-trusting-v3",
+      "opponent": "native",
+      "partner": "trusting-v3",
+      "players": 4
+    },
+    {
+      "id": "native-cautious-v3",
+      "opponent": "native",
+      "partner": "cautious-v3",
+      "players": 4
+    }
+  ],
+  "smoke": false,
+  "regression_margin": 0.02,
+  "response_kl_stop": 0.03,
+  "response_kl_rollback": 0.05,
+  "starter_screen": {
+    "plan": "ml/runs/rmappo-game-calibration-v1/plan.json",
+    "frozen_screen_choice": "ml/runs/rmappo-game-calibration-v1/screen-choice.json",
+    "choice_path": "ml/runs/rmappo-game-calibration-v1/choice.json",
+    "scale": 1.5,
+    "screened_game_logit_gains": [
+      1,
+      0.75,
+      1.5,
+      2.0
+    ],
+    "screen_pairs": 64,
+    "recheck_pairs": 256,
+    "recheck_diagnostic_pairs": 64,
+    "accepted": true,
+    "original_checkpoint": "ml/runs/rmappo-retraining-v1/trials/gae99-4101/endpoints/choices-1000000.pt",
+    "approved": false
+  },
+  "corrected_simulator": {
+    "cantos": "authoritative contextual declarations and flor eligibility",
+    "signals": "none-only in 1v1; truthful optional team signals in 2v2",
+    "native_opponent": "publicly proven deciding-perico wins accepted, proven losses declined; no hidden information"
+  },
+  "guard_semantics": "Exact forward KL from pre-update legal distribution, aggregate responses and response families with >=32 genuine choices. Stop actor at .03, restore epoch actor+Adam at .05; critic keeps learning.",
+  "report_reuse": "Identical checkpoint SHA and identical protocol/deals evaluated once; duplicated parent report paths are aliases, never independent samples.",
+  "version": 4,
+  "seeds": [
+    6101,
+    6102,
+    6103
+  ],
+  "profiles": [
+    "protected",
+    "focused"
+  ],
+  "headsup_protection": 1,
+  "players": 4,
+  "parent_sources": {
+    "6101": {
+      "origin": "ml/runs/rmappo-game-calibration-v1/candidates/sharp.pt",
+      "sha256": "e9fef3ff4598520ea066edacde748e14c9893ff7bc2939af4a07b3e6ebe5798a",
+      "original_seed": 4101,
+      "original_choices": 1000549,
+      "ancestor_choices": 3251800,
+      "total_ancestral_choices": 4252349,
+      "file": "6101.pt"
+    },
+    "6102": {
+      "origin": "ml/runs/rmappo-game-calibration-v1/candidates/sharp.pt",
+      "sha256": "e9fef3ff4598520ea066edacde748e14c9893ff7bc2939af4a07b3e6ebe5798a",
+      "original_seed": 4101,
+      "original_choices": 1000549,
+      "ancestor_choices": 3251800,
+      "total_ancestral_choices": 4252349,
+      "file": "6102.pt"
+    },
+    "6103": {
+      "origin": "ml/runs/rmappo-game-calibration-v1/candidates/sharp.pt",
+      "sha256": "e9fef3ff4598520ea066edacde748e14c9893ff7bc2939af4a07b3e6ebe5798a",
+      "original_seed": 4101,
+      "original_choices": 1000549,
+      "ancestor_choices": 3251800,
+      "total_ancestral_choices": 4252349,
+      "file": "6103.pt"
+    }
+  },
+  "prior_nominee": {
+    "origin": "ml/runs/rmappo-context-exploration-v1/trials/control-5101/endpoints/choices-500000.pt",
+    "sha256": "f99f295cbce20c539d66374862b2b75b76b0ce4d78fbaa5675338e5ca6f7e460"
+  },
+  "populations": {
+    "protected": {
+      "full_selfplay_probability": 0.0,
+      "non_selfplay_opponents": {
+        "native": 0.75,
+        "historical": 0.2,
+        "fixed": 0.05
+      },
+      "teammates": {
+        "learner": 0.2,
+        "frozen": 0.02,
+        "reference": 0.3,
+        "literal-v2": 0.08,
+        "trusting-v2": 0.08,
+        "cautious-v2": 0.08,
+        "literal-v3": 0.08,
+        "trusting-v3": 0.08,
+        "cautious-v3": 0.08
+      }
+    },
+    "focused": {
+      "full_selfplay_probability": 0.0,
+      "non_selfplay_opponents": {
+        "native": 0.75,
+        "historical": 0.2,
+        "fixed": 0.05
+      },
+      "teammates": {
+        "learner": 0.11428571428571431,
+        "frozen": 0.01142857142857143,
+        "reference": 0.6,
+        "literal-v2": 0.04571428571428572,
+        "trusting-v2": 0.04571428571428572,
+        "cautious-v2": 0.04571428571428572,
+        "literal-v3": 0.04571428571428572,
+        "trusting-v3": 0.04571428571428572,
+        "cautious-v3": 0.04571428571428572
+      }
+    }
+  },
+  "budgets": [
+    1000000
+  ],
+  "evaluation_reserve_hours": 6,
+  "selection_seed": 106000,
+  "selection_pairs": 1024,
+  "selection_diagnostic_seed": 107400,
+  "selection_diagnostic_pairs": 64,
+  "final_seed": 108000,
+  "final_pairs": 2000,
+  "final_diagnostic_seed": 110000,
+  "final_diagnostic_pairs": 128,
+  "carried_seconds": 1845.03,
+  "checkpoint_policy": "Preserve full resumable checkpoints every 250,000 additional genuine 2v2 choices. Preselect only the 1,000,000-choice endpoint for each arm/seed; complete matches may overshoot. Freeze three actual endpoint choices and one nominee before final evaluation.",
+  "training_objective": "Ordinary RMAPPO, GAE .99, terminal match win/loss. Only team-exclusive local input weights can change. The two arms differ solely in the probability of the frozen reference policy in the human teammate role (30% vs 60% of matches).",
+  "scope": "Six matched four-player continuations from one calibrated starter. Native 1v1 behavior and recurrent state are invariant to updates. Each arm keeps opponents fixed within a match. D103 is evaluation-only. Selection and independent confirmation include both game modes.",
+  "selection_safeguard": "A trained nominee must match the starter on paired heads-up deals, points and recorded behavior, reach native 70% 1v1 and 60% equal-partner 2v2 with both lower 95% bounds above 50%, satisfy the existing primary configuration guards, match or improve team wins and increase reference-human wins against the starter. Rank qualifying endpoints by the lower paired reference-human gain bound, then team win rate. If none qualify keep the starter explicitly. Apply the same checks to the pre-frozen nominee on fresh final deals; a final miss retains the starter for review.",
+  "diagnosis": {
+    "previous": "ml/runs/rmappo-context-headsup-diagnosis-v1/diagnosis.json",
+    "card_detail": "ml/runs/rmappo-reference-focus-preparation-v1/card-diagnosis.json",
+    "card_detail_sha256": "323eee89cb15144ac162a109459cc02faa3228241a7709b6e4b4bb6b00dd6c2f"
+  },
+  "preparation_allowance_seconds": 120,
+  "stream_audit": {
+    "file": "ml/runs/rmappo-reference-focus-preparation-v1/deal-streams.json",
+    "sha256": "0787779e9d6640b7a1ebb035f2bfd2a220e7d17971b78a13415bc3b6e8df687f"
+  },
+  "readiness": {
+    "path": "ml/reports/rmappo-reference-focus-readiness-v1.json",
+    "sha256": "00937390117adcfda45ef62d6bdb7c9470a1b90c0a71c7e56d67a8b983a4e545"
+  }
+}

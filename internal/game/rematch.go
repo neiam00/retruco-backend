@@ -69,6 +69,8 @@ func (h *Host) rematch(ctx context.Context, r *room, user store.User, input Inpu
 		next.RematchVotes = nil
 		next.State = nil
 		next.Signals = nil
+		next.StoredSignals = nil
+		next.CPUCommunication.ResetMatch()
 		next.Events = nil
 		next.CantoHistory = nil
 		next.cantoRevision = &historyRevision{}

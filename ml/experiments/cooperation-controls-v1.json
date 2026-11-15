@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "arms": ["A", "B", "C", "D"],
+  "seeds": [101, 102, 103],
+  "parent_seed": 101,
+  "choices_per_run": 200000,
+  "steps": 8192,
+  "workers": 8,
+  "environments": 32,
+  "calibration_choices": 2048,
+  "warmup_max": 8,
+  "memory_gib": 8,
+  "validation_pairs": 64,
+  "validation_seed": 190000,
+  "diagnostic_pairs": 32,
+  "diagnostic_seed": 191000,
+  "ablation_pairs": 32,
+  "ablation_seed": 192000,
+  "primary_partners": ["reference-cpu", "reference-human", "literal-v2", "trusting-v2", "cautious-v2"],
+  "diagnostic_partners": ["literal-legacy", "silent-v2", "erratic-v2", "sparse-truthful", "hesitant-truthful"],
+  "ablation_partners": ["literal-v2", "trusting-v2"],
+  "signal_policy": "truthful-cpu-v1",
+  "reward": "terminal team match result only",
+  "selection": "fixed final meaningful-choice budget for every run; exploratory best mean architecture for separate ablations",
+  "arm_definitions": {
+    "A": "legacy PPO updates, legacy decision credit, two critic warmups",
+    "B": "conservative PPO and parent KL anchor, calibrated critic warmup; legacy decision credit",
+    "C": "legacy PPO updates; genuine-choice credit and normalization; two critic warmups",
+    "D": "conservative PPO and parent KL anchor, calibrated critic warmup; genuine-choice credit and normalization"
+  }
+}

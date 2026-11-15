@@ -1,0 +1,77 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "id": "starter",
+      "family": "legacy",
+      "source": "runs/target-improvement-v1/inputs/legacy-champion-lstm16.pt",
+      "source_sha256": "b10e0b5e6a6f8be9f3ddd9e2127113d0d36dcc356bf4e4e6558827444bc60d3e",
+      "lineage": [
+        "b10e0b5e6a6f8be9f3ddd9e2127113d0d36dcc356bf4e4e6558827444bc60d3e"
+      ]
+    },
+    {
+      "id": "league-501",
+      "family": "league-lambda99-501",
+      "source": "runs/target-improvement-v1/discovery/L99-seed-501/candidate.pt",
+      "source_sha256": "df69ca351b026211d28621074834a216b3b154dfe8128cc75c5bb524f0d46588",
+      "lineage": [
+        "b10e0b5e6a6f8be9f3ddd9e2127113d0d36dcc356bf4e4e6558827444bc60d3e"
+      ]
+    },
+    {
+      "id": "native-502",
+      "family": "native-lambda99-502",
+      "source": "runs/target-improvement-v1/discovery/N99-seed-502/candidate.pt",
+      "source_sha256": "adea64ff3b86dd3006c53c157f7381c0eaeb2798f179c91a681005466574ca5a",
+      "lineage": [
+        "b10e0b5e6a6f8be9f3ddd9e2127113d0d36dcc356bf4e4e6558827444bc60d3e"
+      ]
+    },
+    {
+      "id": "return-503",
+      "family": "league-terminal-503",
+      "source": "runs/target-improvement-v1/discovery/L100-seed-503/candidate.pt",
+      "source_sha256": "d93cc4785b4495e4295c124adb1c25c33e8fc0315a6d5c8f4ad967fc325eee02",
+      "lineage": [
+        "b10e0b5e6a6f8be9f3ddd9e2127113d0d36dcc356bf4e4e6558827444bc60d3e"
+      ]
+    },
+    {
+      "id": "native-return-501",
+      "family": "native-terminal-501",
+      "source": "runs/target-improvement-v1/discovery/N100-seed-501/candidate.pt",
+      "source_sha256": "b7a5d296d3e204a01b64627c7f8ffbed2f04280aeb9160abaca82f422849b63e",
+      "lineage": [
+        "b10e0b5e6a6f8be9f3ddd9e2127113d0d36dcc356bf4e4e6558827444bc60d3e"
+      ]
+    },
+    {
+      "id": "continuation-601-500000",
+      "family": "native-continuation-601",
+      "source": "runs/target-improvement-v1/confirmation/seed-601/candidate-budget-000500000.pt",
+      "source_sha256": "5a34d9d7f8665157272789a2a3b74f00a2fd74457003e417dd02d418019a293a",
+      "lineage": [
+        "b10e0b5e6a6f8be9f3ddd9e2127113d0d36dcc356bf4e4e6558827444bc60d3e"
+      ]
+    },
+    {
+      "id": "continuation-601-1000000",
+      "family": "native-continuation-601",
+      "source": "runs/target-improvement-v1/confirmation/seed-601/candidate-budget-001000000.pt",
+      "source_sha256": "bea54cc835200b6f1a195574fb11f393f532fc3e6ccf782c6635602c1bd27db3",
+      "lineage": [
+        "b10e0b5e6a6f8be9f3ddd9e2127113d0d36dcc356bf4e4e6558827444bc60d3e"
+      ]
+    },
+    {
+      "id": "continuation-601-2000000",
+      "family": "native-continuation-601",
+      "source": "runs/target-improvement-v1/confirmation/seed-601/candidate-budget-002000000.pt",
+      "source_sha256": "8469fd53f76787e8c1b2ff183c145f25a56d78fe9f5410f101f25268247c70f7",
+      "lineage": [
+        "b10e0b5e6a6f8be9f3ddd9e2127113d0d36dcc356bf4e4e6558827444bc60d3e"
+      ]
+    }
+  ]
+}
