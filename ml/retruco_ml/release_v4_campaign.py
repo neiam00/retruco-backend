@@ -25,6 +25,8 @@ from .evaluation_styles import MIXTURE_STYLES, POPULATION_SCHEDULE
 from .holdout import reserve, validate_reservations
 from .release_recurrent import BrowserActor
 from .release_recurrent_bluff import diagnose
+from .selective_bluff import PROTOCOL as OPENING_PROTOCOL
+from .selective_bluff import diagnose_ordinary
 from .statistics import pooled
 
 
@@ -64,7 +66,7 @@ def copy_checked(source, target, expected):
 DEFAULT_RESPONSES = ((2, 901), (2, 902), (2, 903), (4, 904), (4, 905), (4, 906))
 
 
-def specifications(response_seeds=DEFAULT_RESPONSES):
+def specifications(response_seeds=DEFAULT_RESPONSES, selective=False):
     if (
         sorted(n for n, _ in response_seeds) != [2, 2, 2, 4, 4, 4]
         or len({s for _, s in response_seeds}) != 6
@@ -114,10 +116,14 @@ def specifications(response_seeds=DEFAULT_RESPONSES):
         add("bluff-" + style, kind="bluff", players=2, opponent=style)
     for n, seed in response_seeds:
         add(f"response-{n}p-{seed}", players=n, response_seed=seed)
+    if selective:
+        add("bluff-ordinary", kind="selective-bluff", players=2)
     return jobs
 
 
-def prepare(root, project, revision, candidate_run="reference-envido-v1"):
+def prepare(
+    root, project, revision, candidate_run="reference-envido-v1", selective=False
+):
     root = Path(root)
     project = Path(project)
     if Path(candidate_run).name != candidate_run or candidate_run in ("", ".", ".."):
@@ -212,7 +218,7 @@ def prepare(root, project, revision, candidate_run="reference-envido-v1"):
         "seat_schedule": SEAT_SCHEDULE,
         "opponent_schedule": POPULATION_SCHEDULE,
         "opponent_styles": list(MIXTURE_STYLES),
-        "specifications": specifications(external["opponents"]),
+        "specifications": specifications(external["opponents"], selective),
         "behavior_thresholds": {
             "bluff": "positive policy probability and lower paired win-gain CI above zero on baseline weak-opening-v1",
             "adaptation": "lower paired win-gain CI above zero on the population",
@@ -222,6 +228,11 @@ def prepare(root, project, revision, candidate_run="reference-envido-v1"):
         },
         "deceptive_role": "scripted deceptive opponents are human-role seats, so the candidate and other CPU actors continue to obey truthful signal masks",
     }
+    if selective:
+        config["selective_opening"] = OPENING_PROTOCOL
+        config["behavior_thresholds"]["bluff"] = (
+            "zero fixed 4-5-6 offers; at least 2000 bounded ordinary openings in 196608 matches; positive lower paired match-win bound"
+        )
     freeze(root / "full-configuration.json", config)
     ident = fingerprint(config)
     row = reserve(project / "ml/runs/release-seeds.json", ident, 2000, 1000)
@@ -239,8 +250,11 @@ def check_inputs(root, project):
     validate_reservations(ledger["reservations"])
     if row["fingerprint"] != ident or ledger["reservations"].get(ident) != row:
         raise ValueError("Unverified holdout reservation")
+    if conf.get("selective_opening") not in (None, OPENING_PROTOCOL):
+        raise ValueError("Unknown selective-opening protocol")
     if conf["specifications"] != specifications(
-        conf.get("response_seeds", DEFAULT_RESPONSES)
+        conf.get("response_seeds", DEFAULT_RESPONSES),
+        selective=conf.get("selective_opening") == OPENING_PROTOCOL,
     ):
         raise ValueError("Protocol plan mismatch")
     code = Path(__file__).resolve().parents[2]
@@ -332,7 +346,10 @@ def run_report(args):
     part = load_checkpoint(partner_file) if partner_file else None
     simulator = root / "bin/selfplay"
     log = root / "logs" / f"{name}.log"
-    if spec["kind"] == "bluff":
+    if spec["kind"] == "selective-bluff":
+        report = diagnose_ordinary(root, ident, row)
+        log.write_text(f"Completed {report['matches']} ordinary matches.\n")
+    elif spec["kind"] == "bluff":
         report = diagnose(
             model, simulator, row["bluff_pairs"], row["bluff_seed"], spec["opponent"]
         )
@@ -433,6 +450,11 @@ def main():
     p.add_argument("command", choices=["prepare", "base", "responses"])
     p.add_argument("--root", type=Path, required=True)
     p.add_argument("--project", type=Path, required=True)
+    p.add_argument(
+        "--selective-bluff",
+        action="store_true",
+        help="Freeze the prospective ordinary-opening test and fixed-hand veto",
+    )
     p.add_argument("--candidate-run", default="reference-envido-v1")
     p.add_argument("--jobs", type=int, default=6)
     p.add_argument("--environments", type=int, default=32)
@@ -458,7 +480,7 @@ def main():
         ).strip()
         print(
             "Frozen full format-4 evaluation",
-            prepare(root, project, rev, a.candidate_run),
+            prepare(root, project, rev, a.candidate_run, a.selective_bluff),
             flush=True,
         )
         return

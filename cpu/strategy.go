@@ -7,7 +7,8 @@ import (
 )
 
 // PlayingProfile identifies the CPU choices used in live games and paired evaluations.
-const PlayingProfile = "value-and-team-v11"
+const PlayingProfile = "value-and-team-v12"
+const OpeningEquityProfile = "value-and-team-v11"
 const HeadsUpEnvidoProfile = "value-and-team-v10"
 const RetrucoLadderProfile = "value-and-team-v9"
 const OpeningDefenseProfile = "value-and-team-v8"
@@ -39,7 +40,7 @@ func PolicyChoices(v rules.View, seat int, profile string) ([]rules.Command, boo
 		v.Vira == nil || !v.Vira.Valid() || v.Holding == nil || len(v.Hand) != 3 || len(v.Seats) != n || len(v.Legal) < 2 {
 		return v.Legal, false
 	}
-	openingDefense := profile == PlayingProfile || profile == HeadsUpEnvidoProfile || profile == RetrucoLadderProfile || profile == OpeningDefenseProfile
+	openingDefense := profile == PlayingProfile || profile == OpeningEquityProfile || profile == HeadsUpEnvidoProfile || profile == RetrucoLadderProfile || profile == OpeningDefenseProfile
 	referenceEnvido := openingDefense || profile == ReferenceEnvidoProfile
 	partnershipProfile := profile == PartnershipProfile || referenceEnvido
 	pericoProfile := profile == CompulsoryPericoProfile || partnershipProfile
@@ -47,8 +48,9 @@ func PolicyChoices(v rules.View, seat int, profile string) ([]rules.Command, boo
 	capRaiseAtTarget := profile == HeadsUpWagerProfile || teamProfile
 	e := wagerAssessment{view: v, seat: seat, priceOpening: n == 4 && referenceEnvido, revised: profile == HeadsUpCardProfile || capRaiseAtTarget,
 		capRaiseAtTarget: capRaiseAtTarget, capTruco: teamProfile && (n == 4 || pericoProfile)}
-	e.priceMatch = n == 2 && profile == PlayingProfile
-	e.priceHeadsUp = n == 2 && (profile == PlayingProfile || profile == HeadsUpEnvidoProfile)
+	e.selectOpening = n == 2 && profile == PlayingProfile
+	e.priceMatch = n == 2 && (profile == PlayingProfile || profile == OpeningEquityProfile)
+	e.priceHeadsUp = n == 2 && (profile == PlayingProfile || profile == OpeningEquityProfile || profile == HeadsUpEnvidoProfile)
 	e.headsUpDefense = n == 2 && openingDefense
 	if e.headsUpDefense {
 		e.pegado = againstShownStack(v, seat)
@@ -100,6 +102,7 @@ func PolicyChoices(v rules.View, seat int, profile string) ([]rules.Command, boo
 }
 
 type wagerAssessment struct {
+	selectOpening    bool
 	priceMatch       bool
 	priceHeadsUp     bool
 	headsUpDefense   bool
@@ -213,6 +216,9 @@ func (a *wagerAssessment) allows(c rules.Command) bool {
 				v.TrucoValue == 1 && v.Mano == a.seat && !v.FlorValid && headsUpLead(v, a.seat) &&
 				v.Config.Target-max(v.Scores[0], v.Scores[1]) > 3 && (!a.priceHeadsUp || v.Scores[a.seat%2] <= v.Scores[1-a.seat%2]) {
 				if a.priceMatch && !odds.opening.worthwhile(v.Config.Target-v.Scores[a.seat%2], v.Config.Target-v.Scores[1-a.seat%2]) {
+					return false
+				}
+				if a.selectOpening && !profitableOpening(v, a.seat) {
 					return false
 				}
 				a.openingBluff = true

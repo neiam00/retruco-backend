@@ -30,6 +30,9 @@ from .release_v4_campaign import (
     load,
     response_checkpoint,
 )
+from .selective_bluff import MATCHES as OPENING_MATCHES
+from .selective_bluff import PROTOCOL as OPENING_PROTOCOL
+from .selective_bluff import start_seed, verify_ordinary
 from .statistics import interval, paired_loss
 
 
@@ -229,6 +232,14 @@ def evaluate_audit(root, project):
                         c["actions"].get("false_signal_claim", 0) == 0,
                         "Deployed CPU emitted a false signal",
                     )
+            elif spec["kind"] == "selective-bluff":
+                require(
+                    conf.get("selective_opening") == OPENING_PROTOCOL
+                    and d["seed"] == start_seed(res)
+                    and d["matches"] == len(d["rows"]) == OPENING_MATCHES
+                    and d["fixture"] == OPENING_PROTOCOL,
+                    "Wrong selective opening receipt",
+                )
             else:
                 require(
                     d["seed"] == res["bluff_seed"]
@@ -462,6 +473,17 @@ def evaluate_audit(root, project):
             a["pairs"] >= 1000 and a["raw_rule_offers"] == a["pairs"],
             "Unexpected raw fixture",
         )
+        if conf.get("selective_opening") == OPENING_PROTOCOL:
+            require(
+                all(
+                    z["deployed_offers"] == 0
+                    and z["raw_rule_offers"] == z["pairs"]
+                    and z["policy_raise_probability"] == 0
+                    for z in (a, b)
+                ),
+                "The weak fixed-hand veto failed",
+            )
+            return verify_ordinary(report("bluff-ordinary"), res)
         require(
             a["deployed_offers"] == a["pairs"]
             and 0 < a["policy_raise_probability"] <= 1,

@@ -53,7 +53,7 @@ From `ml/`, export a supported recurrent checkpoint with the same choice policy 
 ```sh
 uv run --locked python -m retruco_ml.bundle "$CHECKPOINT" runs/browser-candidate \
   --training-snapshot "$TRAINING_SNAPSHOT" --team-play closing-card-and-flor-v2 \
-  --choice-policy value-and-team-v11
+  --choice-policy value-and-team-v12
 ```
 
 The bundle contains a quantized actor, the WASM evaluator, and a manifest with their hashes and source identity. Use the frontend's [local CPU preview instructions](https://github.com/neiam00/retruco-webapp#local-cpu-evaluation) to play it. Production loading requires an approved bundle. Keep the corresponding simulator, training source revision, lockfile and checkpoint together for later verification.
@@ -69,3 +69,13 @@ uv run --locked python -m unittest discover -s tests -v
 ```
 
 Run `uv run --locked ruff check --fix .` and `uv run --locked ruff format .` to apply safe lint fixes and formatting. Ruff excludes frozen runs and generated build outputs.
+
+For prospective format-4 qualification, `release_v4_campaign prepare
+--selective-bluff` keeps the 4–5–6 hand as a veto regression. It also reserves
+196,608 fresh ordinary heads-up matches against the native CPU, balancing
+target, flor and seat. At the first bounded weak opening in each match, the
+browser policy plays both an opening Truco and a quiet card on the same deal.
+At least 2,000 different deals must offer a bounded opening. Its paired 95%
+lower bound for match-win gain must exceed zero. The opponent-adaptation
+criterion still requires a positive paired lower bound on the mixed population.
+Historical campaigns retain the protocol recorded in their frozen configurations.
