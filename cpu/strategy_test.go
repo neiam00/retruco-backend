@@ -199,6 +199,15 @@ func TestTeamTrucoPlaysForTheAgreedMatchPoint(t *testing.T) {
 	v.Legal = append(v.Legal, call)
 	assert.NotContains(t, cpu.PlayingChoices(v, 3), call)
 	v.Scores[1] = 20
+	assert.Contains(t, cpu.ChoicesForProfile(v, 3, cpu.FirstTrickValueProfile), call)
+	assert.NotContains(t, cpu.PlayingChoices(v, 3), call)
+	// The ace won the first trick, leaving both pieces for a genuine value call.
+	v.Seats[0].Plays[0] = played(rules.Cups, 4)
+	v.Seats[1].Plays[0] = played(rules.Cups, 5)
+	v.Seats[2].Plays[0] = played(rules.Clubs, 4)
+	v.Seats[3].Plays[0] = played(rules.Spades, 1)
+	v.Hand[2].Used = true
+	v.Round = 1
 	assert.Contains(t, cpu.PlayingChoices(v, 3), call)
 	// An opposing raise remains answerable, even when our own stake already suffices.
 	v.Scores[1] = 21

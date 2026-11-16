@@ -64,7 +64,7 @@ class RMAPPOTrainingTests(unittest.TestCase):
         self.assertGreaterEqual(counts["choice_policy_decisions"], len(records))
         self.assertTrue(
             all(
-                r.observation.get("choicePolicy") == "value-and-team-v13"
+                r.observation.get("choicePolicy") == "value-and-team-v14"
                 for r in records
             )
         )

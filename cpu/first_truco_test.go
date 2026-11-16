@@ -29,13 +29,16 @@ func TestFirstTrickTrucoCanWaitAfterAnOpponentPlays(t *testing.T) {
 			previous, bounded := cpu.PolicyChoices(v, 1, cpu.AdaptiveSelectionProfile)
 			require.False(t, bounded)
 			require.Contains(t, previous, bid)
-			current, bounded := cpu.PolicyChoices(v, 1, cpu.PlayingProfile)
+			current, bounded := cpu.PolicyChoices(v, 1, cpu.FirstTrickValueProfile)
 			require.False(t, bounded, "a deferred value wager must not become an opening bluff")
 			if tc.allow {
 				require.Contains(t, current, bid)
 			} else {
 				require.NotContains(t, current, bid)
 			}
+			deferred, marked := cpu.PolicyChoices(v, 1, cpu.PlayingProfile)
+			require.NotContains(t, deferred, bid, "even a strong ordinary value call waits for the first trick to finish")
+			require.False(t, marked)
 			require.Contains(t, v.Legal, bid, "human legal wagers remain available")
 		})
 	}

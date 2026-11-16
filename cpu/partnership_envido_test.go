@@ -39,9 +39,10 @@ func TestWeakEnvidoDelaysTrucoUntilInterruptionCloses(t *testing.T) {
 	for _, choice := range choices {
 		assert.Equal(t, "play", choice.Type)
 	}
-	// If envido is already settled, neither rival can interrupt.
+	// Closing envido used to release the first-trick Truco. The live CPU still waits for the trick.
 	v.Legal = v.Legal[:len(v.Legal)-1]
-	assert.Contains(t, cpu.PlayingChoices(v, 0), truco)
+	assert.Contains(t, cpu.ChoicesForProfile(v, 0, cpu.FirstTrickValueProfile), truco)
+	assert.NotContains(t, cpu.PlayingChoices(v, 0), truco)
 }
 
 func TestPartnerPreviewCanEstablishTeamEnvido(t *testing.T) {
