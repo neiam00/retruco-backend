@@ -7,7 +7,8 @@ import (
 )
 
 // PlayingProfile identifies the CPU choices used in live games and paired evaluations.
-const PlayingProfile = "value-and-team-v12"
+const PlayingProfile = "value-and-team-v13"
+const AdaptiveSelectionProfile = "value-and-team-v12"
 const OpeningEquityProfile = "value-and-team-v11"
 const HeadsUpEnvidoProfile = "value-and-team-v10"
 const RetrucoLadderProfile = "value-and-team-v9"
@@ -40,7 +41,7 @@ func PolicyChoices(v rules.View, seat int, profile string) ([]rules.Command, boo
 		v.Vira == nil || !v.Vira.Valid() || v.Holding == nil || len(v.Hand) != 3 || len(v.Seats) != n || len(v.Legal) < 2 {
 		return v.Legal, false
 	}
-	openingDefense := profile == PlayingProfile || profile == OpeningEquityProfile || profile == HeadsUpEnvidoProfile || profile == RetrucoLadderProfile || profile == OpeningDefenseProfile
+	openingDefense := profile == PlayingProfile || profile == AdaptiveSelectionProfile || profile == OpeningEquityProfile || profile == HeadsUpEnvidoProfile || profile == RetrucoLadderProfile || profile == OpeningDefenseProfile
 	referenceEnvido := openingDefense || profile == ReferenceEnvidoProfile
 	partnershipProfile := profile == PartnershipProfile || referenceEnvido
 	pericoProfile := profile == CompulsoryPericoProfile || partnershipProfile
@@ -48,9 +49,10 @@ func PolicyChoices(v rules.View, seat int, profile string) ([]rules.Command, boo
 	capRaiseAtTarget := profile == HeadsUpWagerProfile || teamProfile
 	e := wagerAssessment{view: v, seat: seat, priceOpening: n == 4 && referenceEnvido, revised: profile == HeadsUpCardProfile || capRaiseAtTarget,
 		capRaiseAtTarget: capRaiseAtTarget, capTruco: teamProfile && (n == 4 || pericoProfile)}
-	e.selectOpening = n == 2 && profile == PlayingProfile
-	e.priceMatch = n == 2 && (profile == PlayingProfile || profile == OpeningEquityProfile)
-	e.priceHeadsUp = n == 2 && (profile == PlayingProfile || profile == OpeningEquityProfile || profile == HeadsUpEnvidoProfile)
+	e.reserveFirstTruco = profile == PlayingProfile
+	e.selectOpening = n == 2 && (profile == PlayingProfile || profile == AdaptiveSelectionProfile)
+	e.priceMatch = n == 2 && (profile == PlayingProfile || profile == AdaptiveSelectionProfile || profile == OpeningEquityProfile)
+	e.priceHeadsUp = n == 2 && (profile == PlayingProfile || profile == AdaptiveSelectionProfile || profile == OpeningEquityProfile || profile == HeadsUpEnvidoProfile)
 	e.headsUpDefense = n == 2 && openingDefense
 	if e.headsUpDefense {
 		e.pegado = againstShownStack(v, seat)
@@ -102,20 +104,25 @@ func PolicyChoices(v rules.View, seat int, profile string) ([]rules.Command, boo
 }
 
 type wagerAssessment struct {
-	selectOpening    bool
-	priceMatch       bool
-	priceHeadsUp     bool
-	headsUpDefense   bool
-	openingBluff     bool
-	pegado           stackOutcomes
-	capTruco         bool
-	capRaiseAtTarget bool
-	revised          bool
-	view             rules.View
-	seat             int
-	odds             *showdownOdds
-	plainEnvido      bool
-	priceOpening     bool
+	reserveFirstTruco bool
+	selectOpening     bool
+	priceMatch        bool
+	priceHeadsUp      bool
+	headsUpDefense    bool
+	openingBluff      bool
+	pegado            stackOutcomes
+	capTruco          bool
+	capRaiseAtTarget  bool
+	revised           bool
+	view              rules.View
+	seat              int
+	odds              *showdownOdds
+	plainEnvido       bool
+	priceOpening      bool
+}
+
+func (a *wagerAssessment) firstTruco(c rules.Command) bool {
+	return a.reserveFirstTruco && a.view.Round == 0 && a.view.TrucoValue == 1 && c.Type == "call" && c.Kind == "truco" && c.Amount == 3
 }
 
 func (a *wagerAssessment) estimate() *showdownOdds {
@@ -198,7 +205,7 @@ func (a *wagerAssessment) allows(c rules.Command) bool {
 			}
 			odds := a.estimate()
 			if !odds.trucoKnown {
-				return !a.headsUpDefense
+				return !a.headsUpDefense && !a.firstTruco(c)
 			}
 			// Ordinary truco can still be a bluff. More expensive calls
 			// need progressively stronger cards at the table.
@@ -210,6 +217,11 @@ func (a *wagerAssessment) allows(c rules.Command) bool {
 				minimum = 75
 			}
 			if odds.trucoWins*100 >= minimum*dealSamples {
+				// A marginal value call should wait for the first trick to settle.
+				// Apply this to every seat and declaration, including later in the trick.
+				if a.firstTruco(c) {
+					return odds.trucoWins*100 >= 72*dealSamples
+				}
 				return true
 			}
 			if a.headsUpDefense && c == (rules.Command{Type: "call", Kind: "truco", Amount: 3}) &&
