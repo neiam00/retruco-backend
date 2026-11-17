@@ -7,7 +7,8 @@ import (
 )
 
 // PlayingProfile identifies the CPU choices used in live games and paired evaluations.
-const PlayingProfile = "value-and-team-v14"
+const PlayingProfile = "value-and-team-v15"
+const DeferredTrucoProfile = "value-and-team-v14"
 const FirstTrickValueProfile = "value-and-team-v13"
 const AdaptiveSelectionProfile = "value-and-team-v12"
 const OpeningEquityProfile = "value-and-team-v11"
@@ -42,7 +43,12 @@ func PolicyChoices(v rules.View, seat int, profile string) ([]rules.Command, boo
 		v.Vira == nil || !v.Vira.Valid() || v.Holding == nil || len(v.Hand) != 3 || len(v.Seats) != n || len(v.Legal) < 2 {
 		return v.Legal, false
 	}
-	openingDefense := profile == PlayingProfile || profile == FirstTrickValueProfile || profile == AdaptiveSelectionProfile || profile == OpeningEquityProfile || profile == HeadsUpEnvidoProfile || profile == RetrucoLadderProfile || profile == OpeningDefenseProfile
+	deferFirstTruco := profile == PlayingProfile || profile == DeferredTrucoProfile
+	reserveFirstTruco := deferFirstTruco || profile == FirstTrickValueProfile
+	selectOpening := reserveFirstTruco || profile == AdaptiveSelectionProfile
+	priceMatch := selectOpening || profile == OpeningEquityProfile
+	priceHeadsUp := priceMatch || profile == HeadsUpEnvidoProfile
+	openingDefense := priceHeadsUp || profile == RetrucoLadderProfile || profile == OpeningDefenseProfile
 	referenceEnvido := openingDefense || profile == ReferenceEnvidoProfile
 	partnershipProfile := profile == PartnershipProfile || referenceEnvido
 	pericoProfile := profile == CompulsoryPericoProfile || partnershipProfile
@@ -50,11 +56,11 @@ func PolicyChoices(v rules.View, seat int, profile string) ([]rules.Command, boo
 	capRaiseAtTarget := profile == HeadsUpWagerProfile || teamProfile
 	e := wagerAssessment{view: v, seat: seat, priceOpening: n == 4 && referenceEnvido, revised: profile == HeadsUpCardProfile || capRaiseAtTarget,
 		capRaiseAtTarget: capRaiseAtTarget, capTruco: teamProfile && (n == 4 || pericoProfile)}
-	e.deferFirstTruco = profile == PlayingProfile
-	e.reserveFirstTruco = profile == PlayingProfile || profile == FirstTrickValueProfile
-	e.selectOpening = n == 2 && (profile == PlayingProfile || profile == FirstTrickValueProfile || profile == AdaptiveSelectionProfile)
-	e.priceMatch = n == 2 && (profile == PlayingProfile || profile == FirstTrickValueProfile || profile == AdaptiveSelectionProfile || profile == OpeningEquityProfile)
-	e.priceHeadsUp = n == 2 && (profile == PlayingProfile || profile == FirstTrickValueProfile || profile == AdaptiveSelectionProfile || profile == OpeningEquityProfile || profile == HeadsUpEnvidoProfile)
+	e.deferFirstTruco = deferFirstTruco
+	e.reserveFirstTruco = reserveFirstTruco
+	e.selectOpening = n == 2 && selectOpening
+	e.priceMatch = n == 2 && priceMatch
+	e.priceHeadsUp = n == 2 && priceHeadsUp
 	e.headsUpDefense = n == 2 && openingDefense
 	if e.headsUpDefense {
 		e.pegado = againstShownStack(v, seat)
@@ -71,6 +77,12 @@ func PolicyChoices(v rules.View, seat int, profile string) ([]rules.Command, boo
 			break
 		}
 	}
+	// Only consider planning a ley opener when both the wager and first-card
+	// declaration are actually legal. A resolved wager cannot start this sequence.
+	leyOpening := rules.Command{Type: "call", Kind: "ley_envido"}
+	if profile == PlayingProfile {
+		e.planLey = plansFirstCardLey(v, seat) && slices.Contains(v.Legal, leyOpening)
+	}
 	discards := wastefulCards(v, seat)
 	choices := make([]rules.Command, 0, len(v.Legal))
 	for _, c := range v.Legal {
@@ -86,7 +98,7 @@ func PolicyChoices(v rules.View, seat int, profile string) ([]rules.Command, boo
 		if pericoTop >= 0 && (c.Type == "burn" || c.Type == "stack" && c.Top != pericoTop) {
 			continue
 		}
-		if lastEmptyLey && c.Type == "play" && c.Declaration == "a_ley" {
+		if (lastEmptyLey || profile == PlayingProfile && !e.planLey) && c.Type == "play" && c.Declaration == "a_ley" {
 			continue
 		}
 		if !discards[c] && e.allows(c) {
@@ -99,13 +111,42 @@ func PolicyChoices(v rules.View, seat int, profile string) ([]rules.Command, boo
 	if n == 4 && partnershipProfile && len(choices) > 1 {
 		choices = e.partnershipChoices(choices)
 	}
+	if e.planLey && e.plainEnvido && slices.Contains(choices, leyOpening) {
+		// Both wagers passed their own pricing. Use the combined call once.
+		choices = slices.DeleteFunc(choices, func(c rules.Command) bool {
+			return c.Type == "call" && c.Kind == "envido" && c.Mode == ""
+		})
+	}
 	if len(choices) == 0 || len(choices) == len(v.Legal) {
 		return v.Legal, e.openingBluff && len(choices) != 0
 	}
 	return choices, e.openingBluff
 }
 
+// With no flor of our own, reserve A ley for a strong envido while a
+// teammate still has a first card to play. A prior qualified wager or
+// public flor declaration already establishes the terms of the contest.
+func plansFirstCardLey(v rules.View, seat int) bool {
+	if v.Round != 0 || v.Pending != nil || v.Turn != seat {
+		return false
+	}
+	for _, s := range v.Seats {
+		if s.FlorDeclared {
+			return false
+		}
+	}
+	if !v.FlorValid || v.Holding.Flor == 0 || v.Holding.Receta {
+		if v.Config.Players != 4 || v.Holding.Envido < 30 || v.Seats[(seat+2)%4].Plays[0].Present {
+			return false
+		}
+	}
+	return slices.ContainsFunc(v.Legal, func(c rules.Command) bool {
+		return c.Type == "play" && c.Declaration == "a_ley"
+	})
+}
+
 type wagerAssessment struct {
+	planLey           bool
 	deferFirstTruco   bool
 	reserveFirstTruco bool
 	selectOpening     bool
@@ -267,7 +308,7 @@ func (a *wagerAssessment) allows(c rules.Command) bool {
 	}
 	// Without flor, plain envido keeps the normal refusal point. Avoid a
 	// gratuitous A ley opening that gives the rival a free Sin ley refusal.
-	if c.Type == "call" && kind == "ley_envido" && c.Mode == "" && !v.FlorValid && a.plainEnvido {
+	if c.Type == "call" && kind == "ley_envido" && c.Mode == "" && !v.FlorValid && a.plainEnvido && !a.planLey {
 		return false
 	}
 	odds := a.estimate()

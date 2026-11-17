@@ -82,7 +82,7 @@ func TestThirdSeatKeepsAceUnderPartnersPerica(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		v.Legal = append(v.Legal, rules.Command{Type: "play", Card: i, Declaration: "a_ley"})
 	}
-	want := []rules.Command{{Type: "play", Card: 1}, {Type: "play", Card: 1, Declaration: "a_ley"}}
+	want := []rules.Command{{Type: "play", Card: 1}}
 	require.Equal(t, want, cpu.PlayingChoices(v, 3))
 	// The ace can cover a remaining opponent's 3 if the partner led a 2.
 	v.Seats[1].Plays[0] = played(rules.Cups, 2)
@@ -319,6 +319,40 @@ func TestAgreedHeadsUpTrucoAlreadyWinsMatch(t *testing.T) {
 	assert.Contains(t, cpu.PlayingChoices(v, 1), raise)
 }
 
+func TestFirstCardLeyAndCombinedWager(t *testing.T) {
+	plain, bare := rules.Command{Type: "play"}, rules.Command{Type: "play", Declaration: "a_ley"}
+	envido, combined := rules.Command{Type: "call", Kind: "envido"}, rules.Command{Type: "call", Kind: "ley_envido"}
+	for _, n := range []int{2, 4} {
+		v := table(t, n, 0, [3]rules.Card{{Suit: rules.Cups, Number: 2}, {Suit: rules.Spades, Number: 4}, {Suit: rules.Clubs, Number: 10}})
+		v.Legal = []rules.Command{plain, bare, envido, combined}
+		assert.NotContains(t, cpu.PlayingChoices(v, 0), bare)
+	}
+	v := table(t, 4, 0, [3]rules.Card{{Suit: rules.Cups, Number: 7}, {Suit: rules.Cups, Number: 6}, {Suit: rules.Spades, Number: 2}})
+	v.Legal = []rules.Command{plain, bare, envido, combined}
+	assert.Equal(t, []rules.Command{combined}, cpu.PlayingChoices(v, 0))
+	v.Seats[2].Plays[0] = played(rules.Clubs, 4)
+	assert.Contains(t, cpu.PlayingChoices(v, 0), envido)
+	// Once an envido resolves, card play resumes without either opening wager.
+	v.Legal = []rules.Command{plain, bare}
+	assert.Equal(t, []rules.Command{plain}, cpu.PlayingChoices(v, 0))
+}
+
+func TestQualifiedOpeningAfterAnotherSeatSaysLey(t *testing.T) {
+	for _, n := range []int{2, 4} {
+		v := table(t, n, 0, [3]rules.Card{{Suit: rules.Cups, Number: 7}, {Suit: rules.Cups, Number: 6}, {Suit: rules.Cups, Number: 5}})
+		prior := n - 1
+		v.Mano = prior
+		v.Seats[prior].Plays[0] = played(rules.Spades, 3)
+		qualified := rules.Command{Type: "call", Kind: "ley_envido", Mode: "con_ley"}
+		bare := rules.Command{Type: "play", Card: 0, Declaration: "a_ley"}
+		v.Legal = append(v.Legal, bare, qualified, rules.Command{Type: "play", Card: 0, Declaration: "flor"})
+		choices := cpu.PlayingChoices(v, 0)
+		assert.Contains(t, choices, qualified)
+		assert.NotContains(t, choices, bare)
+		assert.Contains(t, v.Legal, bare)
+	}
+}
+
 func TestEmptyLeyOnLastFirstCard(t *testing.T) {
 	v := table(t, 4, 3, [3]rules.Card{{Suit: rules.Spades, Number: 4}, {Suit: rules.Coins, Number: 10}, {Suit: rules.Clubs, Number: 2}})
 	v.Mano = 0
@@ -331,10 +365,12 @@ func TestEmptyLeyOnLastFirstCard(t *testing.T) {
 	assert.Equal(t, []rules.Command{plain}, cpu.PlayingChoices(v, 3))
 	v.Mano = 1
 	v.Seats[0].Plays[0] = rules.PublicPlay{}
-	assert.Contains(t, cpu.PlayingChoices(v, 3), ley, "a later player can still open a qualified envido")
+	assert.NotContains(t, cpu.PlayingChoices(v, 3), ley)
+	assert.Contains(t, cpu.ChoicesForProfile(v, 3, cpu.DeferredTrucoProfile), ley, "historical v14 mask")
 	v.Mano = 0
 	v.Seats[0].Plays[0] = played(rules.Coins, 11)
 	v.FlorValid, v.Holding.Flor = true, 31
+	v.Legal = append(v.Legal, rules.Command{Type: "call", Kind: "ley_envido"})
 	assert.Contains(t, cpu.PlayingChoices(v, 3), ley, "the speaker can preserve an ordinary flor")
 }
 
