@@ -53,7 +53,7 @@ func TestVoiceSignalingCannotCrossRoomsOrSpoofIdentity(t *testing.T) {
 
 func TestVoiceNewTabReplacesOldConnectionWithoutRemovingNewPeer(t *testing.T) {
 	hub := newVoiceHub()
-	oldCtx, oldCancel := context.WithCancel(t.Context())
+	_, oldCancel := context.WithCancel(t.Context())
 	defer oldCancel()
 	previous := &voiceMember{peer: voicePeer{ID: "old"}, userID: "ana", inbox: make(chan voiceMessage, 4), cancel: oldCancel}
 	nextCtx, nextCancel := context.WithCancel(t.Context())
@@ -61,7 +61,11 @@ func TestVoiceNewTabReplacesOldConnectionWithoutRemovingNewPeer(t *testing.T) {
 	next := &voiceMember{peer: voicePeer{ID: "new"}, userID: "ana", inbox: make(chan voiceMessage, 4), cancel: nextCancel}
 	hub.join("ROOM-1234", previous, nil)
 	hub.join("ROOM-1234", next, nil)
-	require.ErrorIs(t, oldCtx.Err(), context.Canceled)
+	select {
+	case <-previous.replaced:
+	default:
+		t.Fatal("previous connection was not notified of replacement")
+	}
 	hub.leave("ROOM-1234", "old")
 	assert.Same(t, next, hub.rooms["ROOM-1234"]["new"])
 	require.NoError(t, nextCtx.Err())

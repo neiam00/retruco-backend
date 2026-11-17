@@ -94,17 +94,40 @@ func TestVoiceCloudflareWelcomeRefreshAndFailure(t *testing.T) {
 	assert.Equal(t, "welcome", message.Type)
 	require.Len(t, message.ICEServers, 1)
 	assert.Equal(t, "user-1", message.ICEServers[0].Username)
-	require.NoError(t, wsjson.Write(ctx, conn, map[string]string{"type": "refresh"}))
-	require.NoError(t, wsjson.Read(ctx, conn, &message))
-	assert.Equal(t, "ice", message.Type)
-	assert.Equal(t, "user-2", message.ICEServers[0].Username)
 	unavailable.Store(true)
 	require.NoError(t, wsjson.Write(ctx, conn, map[string]string{"type": "refresh"}))
-	require.Error(t, wsjson.Read(ctx, conn, &message), "refresh failure closes voice instead of installing empty credentials")
-	assert.Equal(t, int32(3), calls.Load())
+	require.NoError(t, wsjson.Read(ctx, conn, &message))
+	assert.Equal(t, "refresh_retry", message.Type)
+	assert.Equal(t, int32(2), calls.Load())
 	_, response, err := websocket.Dial(ctx, endpoint, &websocket.DialOptions{HTTPHeader: headers})
 	require.Error(t, err)
 	require.NotNil(t, response)
 	assert.Equal(t, http.StatusServiceUnavailable, response.StatusCode)
-	assert.Equal(t, int32(4), calls.Load())
+	assert.Equal(t, int32(3), calls.Load())
+	// The existing session can renew its credentials when the relay recovers.
+	unavailable.Store(false)
+	require.NoError(t, wsjson.Write(ctx, conn, map[string]string{"type": "refresh"}))
+	require.NoError(t, wsjson.Read(ctx, conn, &message))
+	assert.Equal(t, "ice", message.Type)
+	require.Len(t, message.ICEServers, 1)
+	assert.Equal(t, "user-4", message.ICEServers[0].Username)
+}
+
+func TestVoiceTabReplacementSendsTerminalClose(t *testing.T) {
+	ctx, server, code, users := newStreamServer(t)
+	join := func() *websocket.Conn {
+		endpoint := "ws" + strings.TrimPrefix(server.URL, "http") + "/api/matches/" + code + "/voice"
+		headers := http.Header{"Origin": {"https://retruco.test"}, "Cookie": {"retruco_session=" + users[0].ID}}
+		conn, _, err := websocket.Dial(ctx, endpoint, &websocket.DialOptions{HTTPHeader: headers})
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = conn.CloseNow() })
+		var message struct{ Type string }
+		require.NoError(t, wsjson.Read(ctx, conn, &message))
+		require.Equal(t, "welcome", message.Type)
+		return conn
+	}
+	first := join()
+	join()
+	_, _, err := first.Read(ctx)
+	require.Equal(t, websocket.StatusCode(4001), websocket.CloseStatus(err))
 }

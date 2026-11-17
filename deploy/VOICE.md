@@ -55,8 +55,12 @@ contain usable TURN credentials; browser-blocked port 53 URLs are filtered out.
 The provider supplies UDP, TCP, and TLS relay addresses, including TLS on 443.
 
 An initial provider failure returns HTTP 503 before the voice socket opens;
-issuance throttling returns 429. A failed refresh closes the voice connection,
-and the existing UI asks the user to rejoin. Game state remains unaffected.
+issuance throttling returns 429. If renewal fails during a call, the browser keeps
+the current ICE configuration and retries after one minute. A signaling
+heartbeat runs every 25 seconds, including while users are silent. After a signaling
+interruption it rejoins the room and restores its authorized microphone mode
+and mute setting. Leaving audio, losing access, or switching audio to another
+tab ends the old session.
 
 ## Migrate from local Coturn
 

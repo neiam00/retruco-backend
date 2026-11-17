@@ -13,6 +13,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 )
 
 // VoiceConfig holds Cloudflare Realtime TURN credentials. Only short-lived
@@ -47,10 +48,11 @@ type voiceMessage struct {
 }
 
 type voiceMember struct {
-	peer   voicePeer
-	userID string
-	inbox  chan voiceMessage
-	cancel context.CancelFunc
+	peer     voicePeer
+	userID   string
+	inbox    chan voiceMessage
+	cancel   context.CancelFunc
+	replaced chan struct{}
 }
 
 // Signaling is transient and room-scoped. Audio flows directly between browsers
@@ -84,10 +86,11 @@ func (hub *voiceHub) join(code string, member *voiceMember, servers []iceServer)
 	// A second tab replaces this user's old audio connection, preventing echo.
 	for id, previous := range room {
 		if previous.userID == member.userID {
-			previous.cancel()
+			close(previous.replaced)
 			delete(room, id)
 		}
 	}
+	member.replaced = make(chan struct{})
 	room[member.peer.ID] = member
 	peers := make([]voicePeer, 0, len(room))
 	for _, peer := range room {
@@ -208,19 +211,37 @@ func (s *Server) voiceSocket(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 	valid := func() bool {
-		current, authErr := s.authenticate(r)
+		current, authErr := s.authenticate(r.WithContext(ctx))
+		if authErr != nil && !errors.Is(authErr, pgx.ErrNoRows) && !errors.Is(authErr, http.ErrNoCookie) {
+			_ = conn.Close(websocket.StatusTryAgainLater, "No pudimos comprobar la sesión.")
+			return false
+		}
 		if authErr != nil || current.ID != user.ID {
+			_ = conn.Close(websocket.StatusPolicyViolation, "Sesión de voz finalizada.")
 			return false
 		}
 		canSpeak, accessErr := s.host.VoiceAccess(code, user.ID)
 		// Rejoin after a seat change, so every peer gets fresh permissions.
-		return accessErr == nil && member.peer.CanSpeak == canSpeak
+		if accessErr != nil {
+			_ = conn.Close(websocket.StatusPolicyViolation, "La mesa se cerró.")
+			return false
+		}
+		if member.peer.CanSpeak != canSpeak {
+			_ = conn.Close(websocket.StatusServiceRestart, "Cambió tu permiso de voz.")
+			return false
+		}
+		return true
 	}
-	heartbeat := time.NewTicker(25 * time.Second)
+	const heartbeatInterval = 25 * time.Second
+	lastReceived := time.Now()
+	heartbeat := time.NewTicker(heartbeatInterval)
 	defer heartbeat.Stop()
 	for {
 		select {
 		case <-ctx.Done():
+			return
+		case <-member.replaced:
+			_ = conn.Close(4001, "El audio se abrió en otra pestaña.")
 			return
 		case <-updates:
 			if !valid() {
@@ -230,12 +251,18 @@ func (s *Server) voiceSocket(w http.ResponseWriter, r *http.Request) {
 			if !valid() {
 				return
 			}
-			pingCtx, done := context.WithTimeout(ctx, 5*time.Second)
-			err = conn.Ping(pingCtx)
-			done()
-			if err != nil {
-				return
+			// A proxy can terminate control pings on its own WebSocket leg.
+			// Send application traffic all the way to an otherwise idle browser.
+			if time.Since(lastReceived) >= 2*heartbeatInterval {
+				pingCtx, done := context.WithTimeout(ctx, 5*time.Second)
+				err = conn.Ping(pingCtx)
+				done()
+				if err != nil {
+					return
+				}
+				lastReceived = time.Now()
 			}
+			deliverVoice(member, voiceMessage{Type: "heartbeat"})
 		case message := <-member.inbox:
 			payload, err := json.Marshal(message)
 			if err != nil {
@@ -248,7 +275,12 @@ func (s *Server) voiceSocket(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		case message := <-incoming:
-			if !valid() || !s.allow("voice:"+user.ID, 600) {
+			lastReceived = time.Now()
+			if !valid() {
+				return
+			}
+			if !s.allow("voice:"+user.ID, 600) {
+				_ = conn.Close(websocket.StatusPolicyViolation, "Demasiados mensajes de voz.")
 				return
 			}
 			switch message.Type {
@@ -256,7 +288,8 @@ func (s *Server) voiceSocket(w http.ResponseWriter, r *http.Request) {
 				servers, err := s.voiceICEServers(ctx, user.ID)
 				if err != nil {
 					s.log.Error("voice credential refresh unavailable", "error", err)
-					return
+					deliverVoice(member, voiceMessage{Type: "refresh_retry"})
+					continue
 				}
 				deliverVoice(member, voiceMessage{Type: "ice", ICEServers: servers})
 			case "signal":
