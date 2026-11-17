@@ -39,6 +39,7 @@ def collect_cases(actor, executable, choice_policy=None):
             "value-and-team-v13",
             "value-and-team-v14",
             "value-and-team-v15",
+            "value-and-team-v16",
         ):
             obs = simulator.call(
                 [
@@ -60,6 +61,7 @@ def collect_cases(actor, executable, choice_policy=None):
                 "value-and-team-v13",
                 "value-and-team-v14",
                 "value-and-team-v15",
+                "value-and-team-v16",
             ):
                 if (obs["actions"][:, 47] == -1).any() or any(
                     c["type"] == "call"

@@ -89,6 +89,7 @@ class BrowserActor:
             "value-and-team-v13",
             "value-and-team-v14",
             "value-and-team-v15",
+            "value-and-team-v16",
         ) and (
             not hasattr(self.native, "opening_bluff_version")
             or self.native.opening_bluff_version() != 1

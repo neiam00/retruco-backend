@@ -7,7 +7,8 @@ import (
 )
 
 // PlayingProfile identifies the CPU choices used in live games and paired evaluations.
-const PlayingProfile = "value-and-team-v15"
+const PlayingProfile = "value-and-team-v16"
+const FirstCardLeyProfile = "value-and-team-v15"
 const DeferredTrucoProfile = "value-and-team-v14"
 const FirstTrickValueProfile = "value-and-team-v13"
 const AdaptiveSelectionProfile = "value-and-team-v12"
@@ -43,7 +44,8 @@ func PolicyChoices(v rules.View, seat int, profile string) ([]rules.Command, boo
 		v.Vira == nil || !v.Vira.Valid() || v.Holding == nil || len(v.Hand) != 3 || len(v.Seats) != n || len(v.Legal) < 2 {
 		return v.Legal, false
 	}
-	deferFirstTruco := profile == PlayingProfile || profile == DeferredTrucoProfile
+	firstCardLey := profile == PlayingProfile || profile == FirstCardLeyProfile
+	deferFirstTruco := firstCardLey || profile == DeferredTrucoProfile
 	reserveFirstTruco := deferFirstTruco || profile == FirstTrickValueProfile
 	selectOpening := reserveFirstTruco || profile == AdaptiveSelectionProfile
 	priceMatch := selectOpening || profile == OpeningEquityProfile
@@ -81,6 +83,9 @@ func PolicyChoices(v rules.View, seat int, profile string) ([]rules.Command, boo
 	// declaration are actually legal. A resolved wager cannot start this sequence.
 	leyOpening := rules.Command{Type: "call", Kind: "ley_envido"}
 	if profile == PlayingProfile {
+		e.lastCardWins, e.lastCardLosses = exposedRetruco(v, seat)
+	}
+	if firstCardLey {
 		e.planLey = plansFirstCardLey(v, seat) && slices.Contains(v.Legal, leyOpening)
 	}
 	discards := wastefulCards(v, seat)
@@ -98,7 +103,7 @@ func PolicyChoices(v rules.View, seat int, profile string) ([]rules.Command, boo
 		if pericoTop >= 0 && (c.Type == "burn" || c.Type == "stack" && c.Top != pericoTop) {
 			continue
 		}
-		if (lastEmptyLey || profile == PlayingProfile && !e.planLey) && c.Type == "play" && c.Declaration == "a_ley" {
+		if (lastEmptyLey || firstCardLey && !e.planLey) && c.Type == "play" && c.Declaration == "a_ley" {
 			continue
 		}
 		if !discards[c] && e.allows(c) {
@@ -146,23 +151,24 @@ func plansFirstCardLey(v rules.View, seat int) bool {
 }
 
 type wagerAssessment struct {
-	planLey           bool
-	deferFirstTruco   bool
-	reserveFirstTruco bool
-	selectOpening     bool
-	priceMatch        bool
-	priceHeadsUp      bool
-	headsUpDefense    bool
-	openingBluff      bool
-	pegado            stackOutcomes
-	capTruco          bool
-	capRaiseAtTarget  bool
-	revised           bool
-	view              rules.View
-	seat              int
-	odds              *showdownOdds
-	plainEnvido       bool
-	priceOpening      bool
+	lastCardWins, lastCardLosses int
+	planLey                      bool
+	deferFirstTruco              bool
+	reserveFirstTruco            bool
+	selectOpening                bool
+	priceMatch                   bool
+	priceHeadsUp                 bool
+	headsUpDefense               bool
+	openingBluff                 bool
+	pegado                       stackOutcomes
+	capTruco                     bool
+	capRaiseAtTarget             bool
+	revised                      bool
+	view                         rules.View
+	seat                         int
+	odds                         *showdownOdds
+	plainEnvido                  bool
+	priceOpening                 bool
 }
 
 func (a *wagerAssessment) firstTruco(c rules.Command) bool {
@@ -195,6 +201,25 @@ func (a *wagerAssessment) allows(c rules.Command) bool {
 		}
 	}
 	if kind == "truco" {
+		if c.Type == "respond" && a.lastCardWins+a.lastCardLosses > 0 {
+			// A player who can see the final card can raise selectively.
+			// Use a conservative 3:1 value-to-bluff likelihood ratio, not
+			// uniform dealing odds, when deciding whether to pay six.
+			wins := a.lastCardWins
+			total := wins + 3*a.lastCardLosses
+			if wins == 0 || !a.worthAccepting(wins, total, v.Pending.Value, v.Pending.Previous) {
+				return c.Kind == "decline"
+			}
+			if c.Kind == "accept" {
+				return true
+			}
+			if c.Kind == "decline" {
+				return a.lastCardLosses != 0 && v.Pending.Previous < v.Config.Target-v.Scores[v.Pending.Caller]
+			}
+			if c.Kind == "raise" && wins*100 < 80*total {
+				return false
+			}
+		}
 		if a.priceHeadsUp && v.Pending != nil && (c.Kind == "accept" || c.Kind == "decline") {
 			if winner, known := publicTrucoWinner(v); known {
 				return (c.Kind == "accept") == (winner == a.seat%2)
