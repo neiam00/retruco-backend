@@ -44,7 +44,7 @@ func requestedProfile(name string) (string, error) {
 	switch name {
 	case "":
 		return cpu.OriginalPlayingProfile, nil
-	case cpu.OriginalPlayingProfile, cpu.HeadsUpCardProfile, cpu.HeadsUpWagerProfile, cpu.TeamStackProfile, cpu.CompulsoryPericoProfile, cpu.PartnershipProfile, cpu.ReferenceEnvidoProfile, cpu.OpeningDefenseProfile, cpu.RetrucoLadderProfile, cpu.HeadsUpEnvidoProfile, cpu.OpeningEquityProfile, cpu.AdaptiveSelectionProfile, cpu.FirstTrickValueProfile, cpu.DeferredTrucoProfile, cpu.FirstCardLeyProfile, cpu.FinalCardRetrucoProfile, cpu.PlayingProfile:
+	case cpu.OriginalPlayingProfile, cpu.HeadsUpCardProfile, cpu.HeadsUpWagerProfile, cpu.TeamStackProfile, cpu.CompulsoryPericoProfile, cpu.PartnershipProfile, cpu.ReferenceEnvidoProfile, cpu.OpeningDefenseProfile, cpu.RetrucoLadderProfile, cpu.HeadsUpEnvidoProfile, cpu.OpeningEquityProfile, cpu.AdaptiveSelectionProfile, cpu.FirstTrickValueProfile, cpu.DeferredTrucoProfile, cpu.FirstCardLeyProfile, cpu.FinalCardRetrucoProfile, cpu.TeamEnvidoProfile, cpu.PlayingProfile:
 		return name, nil
 	default:
 		return "", fmt.Errorf("unknown CPU choice policy %q", name)

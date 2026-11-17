@@ -127,3 +127,48 @@ func TestRestoreVoidsEnvidoOnlyForAFlorAfterTheWager(t *testing.T) {
 		})
 	}
 }
+
+func TestRestoreWithdrawsAnUnansweredLeyOpeningAfterOwnFlor(t *testing.T) {
+	for _, interrupted := range []bool{false, true} {
+		t.Run(map[bool]string{false: "card turn", true: "interrupted retruco"}[interrupted], func(t *testing.T) {
+			s, err := rules.New(rules.Config{Players: 2, Target: 12}, 0, rules.Deck())
+			require.NoError(t, err)
+			s, _, err = rules.Apply(s, s.Turn, rules.Command{Type: "cut", Cut: 3})
+			require.NoError(t, err)
+			var history []game.GameEvent
+			step := func(seat int, command rules.Command) {
+				var events []rules.Event
+				s, events, err = rules.Apply(s, seat, command)
+				require.NoError(t, err)
+				for _, event := range events {
+					history = append(history, game.GameEvent{Hand: s.HandNumber, Event: event})
+				}
+			}
+			step(1, rules.Command{Type: "call", Kind: "truco", Declaration: "con_mi_flor"})
+			if interrupted {
+				step(0, rules.Command{Type: "respond", Kind: "raise", Amount: 6})
+			} else {
+				step(0, rules.Command{Type: "respond", Kind: "accept"})
+			}
+			before := s
+			// Former engines accepted this wager and suspended the pending Truco.
+			s.Suspended = s.Pending
+			s.Pending = &rules.Wager{Kind: "ley_envido", Caller: 1, Value: 2, Previous: 1}
+			s.Ley, s.DoubleFlor[1] = true, true
+			s.Players[1].FlorDeclared = false // Older snapshots can lack the flag.
+			history = append(history, game.GameEvent{Hand: s.HandNumber, Event: rules.Event{Seat: 1, Type: "call", Kind: "ley_envido"}})
+			match := game.Match{Code: "FLOR-4321", Config: s.Config, State: &s, CantoHistory: history, Seats: []game.Seat{{ID: "ana"}, {ID: "beto"}}}
+			payload, err := json.Marshal(match)
+			require.NoError(t, err)
+			host := game.New(&memoryRepository{payloads: map[string][]byte{match.Code: payload}}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+			require.NoError(t, host.Restore(t.Context()))
+			view, err := host.Snapshot(match.Code, "beto", 1)
+			require.NoError(t, err)
+			assert.Equal(t, before.Pending, view.State.Pending)
+			assert.Nil(t, view.State.Suspended)
+			assert.True(t, view.State.Seats[1].FlorDeclared)
+			assert.Equal(t, rules.LegalActions(before, 1), view.State.Legal)
+			assert.Greater(t, view.State.Revision, s.Revision)
+		})
+	}
+}

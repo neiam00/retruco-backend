@@ -1,6 +1,6 @@
 """Optional evaluation interventions using only a player's public view and own cards."""
 
-LIVE_CHOICES = "value-and-team-v17"
+LIVE_CHOICES = "value-and-team-v18"
 CHOICE_PROFILES = (
     "value-and-team-v1",
     "value-and-team-v2",
@@ -18,6 +18,7 @@ CHOICE_PROFILES = (
     "value-and-team-v14",
     "value-and-team-v15",
     "value-and-team-v16",
+    "value-and-team-v17",
     LIVE_CHOICES,
 )
 

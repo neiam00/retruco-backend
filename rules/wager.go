@@ -57,6 +57,9 @@ func (s *State) call(seat int, c Command) error {
 		}
 		wager.Mode = c.Mode
 	case "ley_envido":
+		if s.Players[seat].FlorDeclared {
+			return fmt.Errorf("cannot open A ley, envido after announcing your own flor")
+		}
 		if s.Ley && !declared {
 			if c.Mode != s.leyReplyMode(seat) {
 				return fmt.Errorf("qualify the envido after A ley according to your holding")

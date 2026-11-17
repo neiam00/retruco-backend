@@ -55,6 +55,39 @@ func TestOpponentsFlorOnFinalTrucoReplyCancelsRefusedEnvido(t *testing.T) {
 	assert.Equal(t, [2]int{3, 1}, s.Scores)
 }
 
+func TestAPlayerCannotOpenLeyEnvidoAfterAnnouncingFlor(t *testing.T) {
+	noFlor := [3]rules.Card{{rules.Spades, 7}, {rules.Coins, 6}, {rules.Cups, 4}}
+	flor := [3]rules.Card{{rules.Cups, 7}, {rules.Cups, 6}, {rules.Cups, 3}}
+	for _, required := range []bool{false, true} {
+		for _, players := range []int{2, 4} {
+			hands := [][3]rules.Card{flor, noFlor}
+			holder := 0
+			if players == 4 {
+				hands = [][3]rules.Card{{{rules.Spades, 5}, {rules.Coins, 1}, {rules.Cups, 1}}, noFlor, flor, {{rules.Clubs, 7}, {rules.Clubs, 6}, {rules.Clubs, 5}}}
+				holder = 2
+			}
+			s := fixture(t, required, hands...)
+			opening := rules.Command{Type: "call", Kind: "ley_envido"}
+			s = apply(t, s, 1, rules.Command{Type: "call", Kind: "envido"})
+			s = apply(t, s, holder, rules.Command{Type: "respond", Kind: "flowers_no"})
+			s = apply(t, s, 1, rules.Command{Type: "call", Kind: "truco"})
+			assertRejectedCanto(t, s, holder, opening)
+			s = apply(t, s, holder, rules.Command{Type: "respond", Kind: "accept", Declaration: "con_mi_flor"})
+			s = apply(t, s, 1, rules.Command{Type: "play", Card: 0})
+			require.Equal(t, holder, s.Turn)
+			assertRejectedCanto(t, s, holder, opening)
+			assertRejectedCanto(t, s, holder, rules.Command{Type: "call", Kind: "flor"})
+			s = apply(t, s, holder, rules.Command{Type: "play", Card: 0, Declaration: "flor"})
+			if players == 4 {
+				challenge := rules.Command{Type: "call", Kind: "flor"}
+				require.Contains(t, rules.LegalActions(s, 3), challenge)
+				s = apply(t, s, 3, challenge)
+				require.Equal(t, "flor", s.Pending.Kind)
+			}
+		}
+	}
+}
+
 func TestDeclaredFlorRequiresExplicitLeyEnvidoForTheWholeTable(t *testing.T) {
 	for _, required := range []bool{false, true} {
 		for _, relation := range []string{"self", "opponent", "teammate", "burned"} {
@@ -96,7 +129,11 @@ func TestDeclaredFlorRequiresExplicitLeyEnvidoForTheWholeTable(t *testing.T) {
 				}
 				opening := rules.Command{Type: "call", Kind: "ley_envido"}
 				legal := rules.LegalActions(s, s.Turn)
-				require.Contains(t, legal, opening)
+				if relation == "self" {
+					assertRejectedCanto(t, s, s.Turn, opening)
+				} else {
+					require.Contains(t, legal, opening)
+				}
 				for _, action := range legal {
 					if action.Type == "call" {
 						assert.NotEqual(t, "envido", action.Kind)
@@ -169,9 +206,14 @@ func TestDeclaredFlorStillAllowsEligibleFlorContest(t *testing.T) {
 }
 
 func TestOnlyAnotherPlayersPublicFlorEnablesFlorTengoReply(t *testing.T) {
-	s := fixture(t, true, [3]rules.Card{{rules.Cups, 4}, {rules.Cups, 6}, {rules.Cups, 7}}, [3]rules.Card{{rules.Coins, 3}, {rules.Coins, 5}, {rules.Coins, 7}})
-	s = apply(t, s, 1, rules.Command{Type: "call", Kind: "truco", Declaration: "con_mi_flor"})
-	s = apply(t, s, 0, rules.Command{Type: "respond", Kind: "accept", Declaration: "con_mi_flor"})
+	s := fixture(t, false,
+		[3]rules.Card{{rules.Cups, 4}, {rules.Cups, 6}, {rules.Cups, 7}},
+		[3]rules.Card{{rules.Coins, 3}, {rules.Coins, 5}, {rules.Coins, 7}},
+		[3]rules.Card{{rules.Clubs, 3}, {rules.Clubs, 5}, {rules.Clubs, 7}},
+		[3]rules.Card{{rules.Spades, 2}, {rules.Cups, 1}, {rules.Coins, 1}},
+	)
+	s = apply(t, s, 1, rules.Command{Type: "call", Kind: "truco"})
+	s = apply(t, s, 2, rules.Command{Type: "respond", Kind: "accept", Declaration: "con_mi_flor"})
 	s = apply(t, s, 1, rules.Command{Type: "call", Kind: "ley_envido"})
 	qualified := apply(t, s, 0, rules.Command{Type: "respond", Kind: "accept", Mode: "con_ley"})
 	assert.Equal(t, qualified, apply(t, s, 0, rules.Command{Type: "call", Kind: "flor"}))
