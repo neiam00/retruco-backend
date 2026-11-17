@@ -1,6 +1,10 @@
 package cpu
 
-import "github.com/neiam00/retruco-backend/rules"
+import (
+	"slices"
+
+	"github.com/neiam00/retruco-backend/rules"
+)
 
 const minimumOpeningPair = 24
 
@@ -37,6 +41,11 @@ func (a *wagerAssessment) partnershipWagers(choices []rules.Command, trickWins i
 			if c.Kind == "flor" || c.Mode == "con_ley" {
 				wins, deals = odds.florWins, odds.contestedDeals
 			}
+			// Opening con ley can put an otherwise payable flor at risk.
+			if a.priceTeamStakes && c.Kind == "ley_envido" && v.FlorValid && !v.Holding.Receta &&
+				odds.contestedDeals > 0 && 100*odds.florWins < 55*odds.contestedDeals {
+				continue
+			}
 			if odds.envidoKnown && deals > 0 && 100*wins >= 58*deals {
 				envido = append(envido, c)
 			}
@@ -65,6 +74,32 @@ func (a *wagerAssessment) partnershipWagers(choices []rules.Command, trickWins i
 	}
 	if len(truco) > 0 {
 		return truco
+	}
+	if a.priceTeamStakes {
+		// Announcing the first compulsory flor immediately can burn the
+		// partner's possible second flor. Keep the choice to say A ley then.
+		partnerHasPlayed := v.Seats[(a.seat+2)%4].Plays[0].Present
+		if v.FlorValid && !v.Holding.Receta && !v.Seats[a.seat].FlorDeclared &&
+			(!v.Config.FlorRequired || partnerHasPlayed) {
+			var declared []rules.Command
+			for _, c := range choices {
+				if c.Type == "play" && c.Declaration == "flor" {
+					declared = append(declared, c)
+				}
+			}
+			if len(declared) > 0 {
+				return declared
+			}
+		}
+		// A raise that was not justified above should not re-enter through
+		// the actor's ordinary menu. A forced choice still belongs to the rules.
+		if trickKnown && 100*trickWins < 80*dealSamples {
+			if affordable := slices.DeleteFunc(slices.Clone(choices), func(c rules.Command) bool {
+				return c.Type == "call" && c.Kind == "truco" && c.Amount >= 6
+			}); len(affordable) > 0 {
+				return affordable
+			}
+		}
 	}
 	return choices
 }

@@ -329,12 +329,31 @@ func TestFirstCardLeyAndCombinedWager(t *testing.T) {
 	}
 	v := table(t, 4, 0, [3]rules.Card{{Suit: rules.Cups, Number: 7}, {Suit: rules.Cups, Number: 6}, {Suit: rules.Spades, Number: 2}})
 	v.Legal = []rules.Command{plain, bare, envido, combined}
-	assert.Equal(t, []rules.Command{combined}, cpu.PlayingChoices(v, 0))
+	assert.Equal(t, []rules.Command{combined}, cpu.ChoicesForProfile(v, 0, cpu.FinalCardRetrucoProfile))
+	assert.Equal(t, []rules.Command{envido}, cpu.PlayingChoices(v, 0))
+	assert.Contains(t, v.Legal, combined)
 	v.Seats[2].Plays[0] = played(rules.Clubs, 4)
 	assert.Contains(t, cpu.PlayingChoices(v, 0), envido)
 	// Once an envido resolves, card play resumes without either opening wager.
 	v.Legal = []rules.Command{plain, bare}
 	assert.Equal(t, []rules.Command{plain}, cpu.PlayingChoices(v, 0))
+}
+
+func TestProtectStrongTrickCardWithoutAnEnvidoWager(t *testing.T) {
+	v := table(t, 4, 0, [3]rules.Card{{Suit: rules.Spades, Number: 7}, {Suit: rules.Cups, Number: 4}, {Suit: rules.Clubs, Number: 10}})
+	ordinary := rules.Command{Type: "call", Kind: "envido"}
+	combined := rules.Command{Type: "call", Kind: "ley_envido"}
+	bare := rules.Command{Type: "play", Declaration: "a_ley"}
+	v.Legal = append(v.Legal, bare, ordinary, combined)
+	menu := cpu.PlayingChoices(v, 0)
+	assert.Contains(t, menu, bare)
+	assert.NotContains(t, menu, combined)
+	assert.NotContains(t, menu, ordinary)
+	v.Seats[2].Plays[0] = played(rules.Cups, 3)
+	assert.NotContains(t, cpu.PlayingChoices(v, 0), bare)
+	v.Seats[2].Plays[0] = rules.PublicPlay{}
+	v.Legal = []rules.Command{{Type: "play"}, bare}
+	assert.NotContains(t, cpu.PlayingChoices(v, 0), bare)
 }
 
 func TestQualifiedOpeningAfterAnotherSeatSaysLey(t *testing.T) {

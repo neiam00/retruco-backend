@@ -7,7 +7,8 @@ import (
 )
 
 // PlayingProfile identifies the CPU choices used in live games and paired evaluations.
-const PlayingProfile = "value-and-team-v16"
+const PlayingProfile = "value-and-team-v17"
+const FinalCardRetrucoProfile = "value-and-team-v16"
 const FirstCardLeyProfile = "value-and-team-v15"
 const DeferredTrucoProfile = "value-and-team-v14"
 const FirstTrickValueProfile = "value-and-team-v13"
@@ -44,7 +45,8 @@ func PolicyChoices(v rules.View, seat int, profile string) ([]rules.Command, boo
 		v.Vira == nil || !v.Vira.Valid() || v.Holding == nil || len(v.Hand) != 3 || len(v.Seats) != n || len(v.Legal) < 2 {
 		return v.Legal, false
 	}
-	firstCardLey := profile == PlayingProfile || profile == FirstCardLeyProfile
+	finalCardRetruco := profile == PlayingProfile || profile == FinalCardRetrucoProfile
+	firstCardLey := finalCardRetruco || profile == FirstCardLeyProfile
 	deferFirstTruco := firstCardLey || profile == DeferredTrucoProfile
 	reserveFirstTruco := deferFirstTruco || profile == FirstTrickValueProfile
 	selectOpening := reserveFirstTruco || profile == AdaptiveSelectionProfile
@@ -58,6 +60,7 @@ func PolicyChoices(v rules.View, seat int, profile string) ([]rules.Command, boo
 	capRaiseAtTarget := profile == HeadsUpWagerProfile || teamProfile
 	e := wagerAssessment{view: v, seat: seat, priceOpening: n == 4 && referenceEnvido, revised: profile == HeadsUpCardProfile || capRaiseAtTarget,
 		capRaiseAtTarget: capRaiseAtTarget, capTruco: teamProfile && (n == 4 || pericoProfile)}
+	e.priceTeamStakes = profile == PlayingProfile && n == 4
 	e.deferFirstTruco = deferFirstTruco
 	e.reserveFirstTruco = reserveFirstTruco
 	e.selectOpening = n == 2 && selectOpening
@@ -82,12 +85,17 @@ func PolicyChoices(v rules.View, seat int, profile string) ([]rules.Command, boo
 	// Only consider planning a ley opener when both the wager and first-card
 	// declaration are actually legal. A resolved wager cannot start this sequence.
 	leyOpening := rules.Command{Type: "call", Kind: "ley_envido"}
-	if profile == PlayingProfile {
+	if finalCardRetruco {
 		e.lastCardWins, e.lastCardLosses = exposedRetruco(v, seat)
 	}
 	if firstCardLey {
 		e.planLey = plansFirstCardLey(v, seat) && slices.Contains(v.Legal, leyOpening)
+		if e.priceTeamStakes && e.plainEnvido && !v.FlorValid {
+			// A strong ordinary pair earns a point on refusal.
+			e.planLey = false
+		}
 	}
+	allowBareLey := e.planLey || e.protectFirstCard(leyOpening)
 	discards := wastefulCards(v, seat)
 	choices := make([]rules.Command, 0, len(v.Legal))
 	for _, c := range v.Legal {
@@ -103,7 +111,7 @@ func PolicyChoices(v rules.View, seat int, profile string) ([]rules.Command, boo
 		if pericoTop >= 0 && (c.Type == "burn" || c.Type == "stack" && c.Top != pericoTop) {
 			continue
 		}
-		if (lastEmptyLey || firstCardLey && !e.planLey) && c.Type == "play" && c.Declaration == "a_ley" {
+		if (lastEmptyLey || firstCardLey && !allowBareLey) && c.Type == "play" && c.Declaration == "a_ley" {
 			continue
 		}
 		if !discards[c] && e.allows(c) {
@@ -150,7 +158,26 @@ func plansFirstCardLey(v rules.View, seat int) bool {
 	})
 }
 
+// Before the partner has played, a strong trick card and a weak side hand
+// can justify reserving ley. The CPU must still pass up an unsupported wager.
+// After any side wager the unqualified opening disappears from the legal list.
+func (a *wagerAssessment) protectFirstCard(leyOpening rules.Command) bool {
+	v := a.view
+	if !a.priceTeamStakes || v.Round != 0 || v.Pending != nil || v.Turn != a.seat ||
+		v.FlorValid || v.Holding.Envido > 7 || v.Seats[(a.seat+2)%4].Plays[0].Present ||
+		!a.plainEnvido || !slices.Contains(v.Legal, leyOpening) {
+		return false
+	}
+	for _, h := range v.Hand {
+		if rules.Strength(h.Card, *v.Vira) >= 13 {
+			return !a.pricedOrdinaryOpening()
+		}
+	}
+	return false
+}
+
 type wagerAssessment struct {
+	priceTeamStakes              bool
 	lastCardWins, lastCardLosses int
 	planLey                      bool
 	deferFirstTruco              bool
