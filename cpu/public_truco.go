@@ -18,7 +18,7 @@ func publicTrucoWinner(v rules.View) (int, bool) {
 		seen[seat.Seat] = true
 	}
 	completed := func(round int) (int, bool) {
-		best, winner := 0, -1
+		var ranks [4]int
 		for _, seat := range v.Seats {
 			play := seat.Plays[round]
 			if !play.Present || play.Concealed || (!play.Burned && (play.Card == nil || !play.Card.Valid())) {
@@ -27,14 +27,9 @@ func publicTrucoWinner(v rules.View) (int, bool) {
 			if play.Burned {
 				continue
 			}
-			rank := rules.Strength(*play.Card, *v.Vira)
-			if rank > best {
-				best, winner = rank, seat.Team
-			} else if rank == best && (round != 0 || winner != seat.Team) {
-				winner = -1
-			}
+			ranks[seat.Seat] = rules.Strength(*play.Card, *v.Vira)
 		}
-		return winner, true
+		return rules.TrickWinner(ranks, v.Config.Players, 0) % 2, true
 	}
 	first, complete := completed(0)
 	if !complete || first < 0 {

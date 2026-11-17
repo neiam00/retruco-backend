@@ -203,6 +203,49 @@ func TestOnlyOpposingHighestCardsForcePegado(t *testing.T) {
 	}
 }
 
+func TestTeammatesSharingTheHighCardWinLaterTricks(t *testing.T) {
+	s := fixture(t, false,
+		[3]rules.Card{{rules.Clubs, 10}, {rules.Coins, 12}, {rules.Clubs, 3}},
+		[3]rules.Card{{rules.Coins, 5}, {rules.Clubs, 12}, {rules.Coins, 6}},
+		[3]rules.Card{{rules.Spades, 12}, {rules.Cups, 12}, {rules.Cups, 3}},
+		[3]rules.Card{{rules.Cups, 1}, {rules.Clubs, 7}, {rules.Cups, 6}})
+	for range 4 {
+		s = apply(t, s, s.Turn, rules.Command{Type: "play", Card: 0})
+	}
+	require.Equal(t, 3, s.Turn)
+	t.Run("an opponent also plays a twelve", func(t *testing.T) {
+		mixed := s
+		for range 4 {
+			mixed = apply(t, mixed, mixed.Turn, rules.Command{Type: "play", Card: 1})
+		}
+		require.NotNil(t, mixed.LastHand)
+		assert.Equal(t, 1, mixed.HandWinner)
+		assert.Equal(t, "tie", mixed.LastHand.Tricks[1].Status)
+		assert.Equal(t, "unplayed", mixed.LastHand.Tricks[2].Status)
+	})
+	for range 4 {
+		kind := "play"
+		if s.Team(s.Turn) == 1 {
+			kind = "burn"
+		}
+		s = apply(t, s, s.Turn, rules.Command{Type: kind, Card: 1})
+	}
+	require.Equal(t, rules.Playing, s.Phase)
+	require.Equal(t, 2, s.Round)
+	require.Equal(t, 0, s.Turn, "the teammate who played the first twelve leads")
+	for range 4 {
+		s = apply(t, s, s.Turn, rules.Command{Type: "play", Card: 2})
+	}
+	require.NotNil(t, s.LastHand)
+	assert.Equal(t, 0, s.HandWinner)
+	for _, round := range []int{1, 2} {
+		trick := s.LastHand.Tricks[round]
+		assert.Equal(t, "won", trick.Status)
+		assert.Equal(t, 0, trick.WinnerTeam)
+		assert.Equal(t, 0, trick.WinnerSeat)
+	}
+}
+
 func TestMandatoryPegadoUsesTopFirstAndKeepsBottomHidden(t *testing.T) {
 	s := fixture(t, false,
 		[3]rules.Card{{rules.Clubs, 3}, {rules.Spades, 11}, {rules.Cups, 4}},

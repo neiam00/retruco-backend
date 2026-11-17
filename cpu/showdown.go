@@ -315,7 +315,7 @@ func playShowdown(plays [3][4]int, hands [4][3]int, n, mano int) int {
 				}
 			}
 		}
-		winner := trickWinner(plays[round], n, lead, round == 0)
+		winner := rules.TrickWinner(plays[round], n, lead)
 		if round == 0 {
 			if winner < 0 {
 				var top, bottom [4]int
@@ -329,7 +329,7 @@ func playShowdown(plays [3][4]int, hands [4][3]int, n, mano int) int {
 					}
 				}
 				for _, trick := range [2][4]int{top, bottom} {
-					if w := trickWinner(trick, n, mano, false); w >= 0 {
+					if w := rules.TrickWinner(trick, n, mano); w >= 0 {
 						return w % 2
 					}
 				}
@@ -344,19 +344,6 @@ func playShowdown(plays [3][4]int, hands [4][3]int, n, mano int) int {
 		lead = winner
 	}
 	return firstTeam
-}
-
-func trickWinner(plays [4]int, n, lead int, first bool) int {
-	best, winner := 0, -1
-	for i := 0; i < n; i++ {
-		seat := (lead + i) % n
-		if rank := plays[seat]; rank > best {
-			best, winner = rank, seat
-		} else if rank == best && (!first || winner < 0 || winner%2 != seat%2) {
-			winner = -1
-		}
-	}
-	return winner
 }
 
 func chooseRank(hand [3]int, trick [4]int, n, seat, firstTeam int) int {

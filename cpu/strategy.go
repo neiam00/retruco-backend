@@ -510,7 +510,7 @@ func wastefulCards(v rules.View, seat int) map[rules.Command]bool {
 					continue
 				}
 				opponent := max(rival, last)
-				if partnerOutcome(v.Round, partner, expensive, opponent) > partnerOutcome(v.Round, partner, cheap, opponent) {
+				if partnerOutcome(partner, expensive, opponent) > partnerOutcome(partner, cheap, opponent) {
 					helps = true
 					break
 				}
@@ -526,12 +526,12 @@ func wastefulCards(v rules.View, seat int) map[rules.Command]bool {
 	return avoided
 }
 
-func partnerOutcome(round, partner, ours, rival int) int {
+func partnerOutcome(partner, ours, rival int) int {
 	best := max(partner, ours)
 	if best < rival {
 		return -1
 	}
-	if best == rival || (round > 0 && partner == ours) {
+	if best == rival {
 		return 0
 	}
 	return 1
@@ -552,7 +552,7 @@ func closingDiscards(v rules.View, seat int, table [4]int, strength [3]int) map[
 			}
 			initial[player.Seat] = rules.Strength(*p.Card, *v.Vira)
 		}
-		first = trickWinner(initial, n, v.Mano, true)
+		first = rules.TrickWinner(initial, n, v.Mano)
 		if first < 0 {
 			return nil
 		}
@@ -576,7 +576,7 @@ func closingDiscards(v rules.View, seat int, table [4]int, strength [3]int) map[
 		if c.Type == "burn" {
 			table[seat] = 0
 		}
-		winner := trickWinner(table, n, v.Mano, v.Round == 0)
+		winner := rules.TrickWinner(table, n, v.Mano)
 		result := 0
 		if winner < 0 && v.Round > 0 {
 			winner = first

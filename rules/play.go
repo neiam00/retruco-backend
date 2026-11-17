@@ -121,28 +121,18 @@ func (s *State) advanceCards() {
 		s.settle(s.Team(winner), reason)
 		return
 	}
-	stacked, firstStack := 0, -1
-	for seat := 0; seat < s.Config.Players; seat++ {
-		if s.Players[seat].Stacked {
-			stacked++
-			firstStack = seat
-		}
-	}
-	if s.Round == 1 && stacked > 0 {
+	stackLead := s.voluntaryThirdLead()
+	if s.Round == 1 && stackLead >= 0 {
 		s.Round = 2
-		start := s.Mano
-		if stacked == 1 {
-			start = s.right(firstStack)
-		}
 		for step := 0; step < s.Config.Players; step++ {
-			seat := (start + step) % s.Config.Players
+			seat := (stackLead + step) % s.Config.Players
 			if !s.Players[seat].Plays[2].Present {
 				s.Turn = seat
 				return
 			}
 		}
 	}
-	if s.Round == 2 && stacked > 0 {
+	if s.Round == 2 && stackLead >= 0 {
 		first := s.roundWinner(0)
 		visibleCardsDecide := s.visibleCardsDecideHand(s.Team(first))
 		// Compare in a private copy to apply pegado's top-card penalty without
@@ -150,11 +140,16 @@ func (s *State) advanceCards() {
 		comparison := *s
 		comparison.revealBottoms()
 		winner := comparison.roundWinner(1)
+		winningRank := 0
+		if winner >= 0 {
+			winningRank = Strength(comparison.Players[winner].Plays[1].Card, s.Vira)
+		}
 		for seat := 0; seat < s.Config.Players; seat++ {
-			if !s.Players[seat].Stacked || winner == seat {
+			if !s.Players[seat].Stacked {
 				continue
 			}
-			if !comparison.teammateStackTie(seat) {
+			bottom := comparison.Players[seat].Plays[1]
+			if bottom.Burned || Strength(bottom.Card, s.Vira) != winningRank {
 				s.Players[seat].Plays[2].Burned = true
 			}
 		}
@@ -185,23 +180,68 @@ func (s *State) advanceCards() {
 	}
 }
 
-func (s State) roundWinner(round int) int {
-	best, winner := 0, -1
-	for offset := 0; offset < s.Config.Players; offset++ {
-		seat := (s.Mano + offset) % s.Config.Players
-		play := s.Players[seat].Plays[round]
-		if !play.Present || play.Burned || play.Concealed {
-			continue
-		}
-		strength := Strength(play.Card, s.Vira)
-		if strength > best {
-			best, winner = strength, seat
-		} else if strength == best && winner >= 0 {
-			// Only opposing high cards empardan the first trick. When two
-			// teammates share the high card, its first player leads next.
-			if round != 0 || s.Team(seat) != s.Team(winner) {
-				winner = -1
+// A lone voluntary stack passes play to its right. With multiple stacks,
+// unstacked players take their third turns in mano order. Returns -1 without stacks.
+func (s *State) voluntaryThirdLead() int {
+	stack := -1
+	for seat := 0; seat < s.Config.Players; seat++ {
+		if s.Players[seat].Stacked {
+			if stack >= 0 {
+				return s.Mano
 			}
+			stack = seat
+		}
+	}
+	if stack < 0 {
+		return -1
+	}
+	return s.right(stack)
+}
+
+func (s *State) roundWinner(round int) int {
+	var ranks [4]int
+	for seat := 0; seat < s.Config.Players; seat++ {
+		play := s.Players[seat].Plays[round]
+		if play.Present && !play.Burned && !play.Concealed {
+			ranks[seat] = Strength(play.Card, s.Vira)
+		}
+	}
+	winner := TrickWinner(ranks, s.Config.Players, s.Mano)
+	if winner < 0 || round == 0 || s.MandatoryStack || s.Config.Players != 4 {
+		return winner
+	}
+	partner := (winner + 2) % 4
+	if ranks[partner] != ranks[winner] {
+		return winner
+	}
+	// Only teammates sharing the high card need their actual play order.
+	if round == 1 || s.Players[winner].Stacked && s.Players[partner].Stacked {
+		return TrickWinner(ranks, s.Config.Players, s.roundWinner(0))
+	}
+	// A stacked top was played before any loose third card.
+	if s.Players[winner].Stacked {
+		return winner
+	}
+	if s.Players[partner].Stacked {
+		return partner
+	}
+	lead := s.voluntaryThirdLead()
+	if lead < 0 {
+		lead = s.roundWinner(1)
+	}
+	return TrickWinner(ranks, s.Config.Players, lead)
+}
+
+// TrickWinner returns the first seat in play order holding the highest valid
+// rank, or -1 if opponents share that rank or all ranks are zero.
+func TrickWinner(ranks [4]int, players, lead int) int {
+	best, winner := 0, -1
+	for offset := 0; offset < players; offset++ {
+		seat := (lead + offset) % players
+		if rank := ranks[seat]; rank > best {
+			best, winner = rank, seat
+		} else if rank == best && winner >= 0 && seat%2 != winner%2 {
+			winner = -1
 		}
 	}
 	return winner
@@ -230,27 +270,6 @@ func (s State) visibleCardsDecideHand(firstTeam int) bool {
 		}
 		third := possible.roundWinner(2)
 		if third >= 0 && possible.Team(third) != firstTeam {
-			return false
-		}
-	}
-	return true
-}
-
-func (s State) teammateStackTie(seat int) bool {
-	if s.Config.Players != 4 {
-		return false
-	}
-	card := s.Players[seat].Plays[1]
-	other := s.Players[(seat+2)%4].Plays[1]
-	if card.Burned || other.Burned || Strength(card.Card, s.Vira) != Strength(other.Card, s.Vira) {
-		return false
-	}
-	for opponent := 0; opponent < 4; opponent++ {
-		if s.Team(opponent) == s.Team(seat) {
-			continue
-		}
-		play := s.Players[opponent].Plays[1]
-		if !play.Burned && Strength(play.Card, s.Vira) >= Strength(card.Card, s.Vira) {
 			return false
 		}
 	}

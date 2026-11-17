@@ -27,7 +27,7 @@ func TestForecastSettlementMatchesGameWithPegadosAndBurns(t *testing.T) {
 			seat := state.Turn
 			view := rules.ViewFor(state, seat, false)
 			if view.Round == 1 && firstTeam < 0 && !view.MandatoryStack {
-				w := trickWinner(forecastTable(view).table[0], 4, view.Mano, true)
+				w := rules.TrickWinner(forecastTable(view).table[0], 4, view.Mano)
 				require.NotEqual(t, -1, w)
 				firstTeam = w % 2
 			}
@@ -69,7 +69,7 @@ func TestForecastSettlementMatchesGameWithPegadosAndBurns(t *testing.T) {
 					}
 				}
 				if v.Round == 1 && team < 0 && !v.MandatoryStack {
-					team = trickWinner(forecastTable(v).table[0], 4, v.Mano, true) % 2
+					team = rules.TrickWinner(forecastTable(v).table[0], 4, v.Mano) % 2
 				}
 				rank := chooseRank(hand, forecastTable(v).table[v.Round], 4, s, team)
 				var next rules.Command

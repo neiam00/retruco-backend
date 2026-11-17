@@ -178,7 +178,7 @@ func (f *trickForecast) resolveStackTops(firstTeam, second int, stacks uint) boo
 				top[s] = 0
 			}
 		}
-		w := trickWinner(top, 4, f.mano, false)
+		w := rules.TrickWinner(top, 4, f.mano)
 		if w >= 0 && w%2 != firstTeam {
 			break
 		}
@@ -187,11 +187,7 @@ func (f *trickForecast) resolveStackTops(firstTeam, second int, stacks uint) boo
 		}
 	}
 	for s, stacked := range f.stacked {
-		if !stacked || second == s {
-			continue
-		}
-		bottom := f.table[1][s]
-		if bottom == 0 || bottom != f.table[1][(s+2)%4] || bottom <= max(f.table[1][(s+1)%4], f.table[1][(s+3)%4]) {
+		if stacked && (second < 0 || f.table[1][s] != f.table[1][second]) {
 			f.table[2][s] = 0
 		}
 	}
@@ -204,7 +200,7 @@ func (f trickForecast) winnerAfter(own trickMove) int {
 	if f.round == 0 {
 		f.finishTrick(0, next, -1)
 	}
-	first := trickWinner(f.table[0], 4, f.mano, true)
+	first := rules.TrickWinner(f.table[0], 4, f.mano)
 	f.mandatory = first < 0
 	if f.round <= 1 {
 		lead := next
@@ -216,9 +212,13 @@ func (f trickForecast) winnerAfter(own trickMove) int {
 		}
 		f.finishTrick(1, lead, first%2)
 	}
-	second := trickWinner(f.table[1], 4, f.mano, false)
+	secondLead := first
 	if f.mandatory {
-		if w := trickWinner(f.table[2], 4, f.mano, false); w >= 0 {
+		secondLead = f.mano
+	}
+	second := rules.TrickWinner(f.table[1], 4, secondLead)
+	if f.mandatory {
+		if w := rules.TrickWinner(f.table[2], 4, f.mano); w >= 0 {
 			return w % 2
 		}
 		if second >= 0 {
@@ -255,7 +255,7 @@ func (f trickForecast) winnerAfter(own trickMove) int {
 		}
 		f.finishTrick(2, lead, first%2)
 	}
-	third := trickWinner(f.table[2], 4, f.mano, false)
+	third := rules.TrickWinner(f.table[2], 4, f.mano)
 	if third < 0 {
 		return first % 2
 	}
@@ -316,7 +316,7 @@ func (a *wagerAssessment) partnershipCards(choices []rules.Command) ([]rules.Com
 				return choices, 0, false
 			}
 		}
-		if (trickWinner(base.table[0], 4, v.Mano, true) < 0) != v.MandatoryStack {
+		if (rules.TrickWinner(base.table[0], 4, v.Mano) < 0) != v.MandatoryStack {
 			return choices, 0, false
 		}
 	}
