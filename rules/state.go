@@ -72,6 +72,7 @@ type State struct {
 	Suspended      *Wager
 	TrucoValue     int
 	TrucoVoice     int
+	EnvidoOpener   int // Original seat, retained through counter-raises.
 	Envido         Wager
 	EnvidoClosed   bool
 	EnvidoAccepted bool
@@ -176,12 +177,16 @@ func StartHand(s State, deck []Card) (State, error) {
 
 // RestoreActiveHand reconciles decisions still pending in an older saved hand.
 // Settled hands and cards already played keep their recorded outcomes.
-func (s *State) RestoreActiveHand(invalidOrdinaryOpening bool) {
+func (s *State) RestoreActiveHand(invalidEnvido bool) {
 	if s.Phase != Playing {
 		return
 	}
 	changed := false
-	if invalidOrdinaryOpening && s.Pending != nil && s.Pending.Kind == "envido" {
+	if s.envidoVoidedByFlor() && (invalidEnvido || s.Envido.Kind == "envido" && s.otherDeclaredFlor(-1)) {
+		s.cancelEnvido()
+		changed = true
+	}
+	if invalidEnvido && s.Pending != nil && s.Pending.Kind == "envido" {
 		s.resumeTruco()
 		changed = true
 	}
@@ -244,6 +249,10 @@ func applyCommand(s State, seat int, command Command, automatic bool) (State, []
 		next.Suspended = &suspended
 	}
 	next.Payouts = append([]Payout(nil), s.Payouts...)
+	// A card or truco response may settle the hand in this same command.
+	if declaresFlor(command.Declaration) && seat != s.EnvidoOpener && s.envidoVoidedByFlor() {
+		next.cancelEnvido()
+	}
 	var err error
 	switch command.Type {
 	case "leave":

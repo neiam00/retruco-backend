@@ -8,6 +8,53 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestLaterFlorVoidsEnvidoUnlessAcceptedConLey(t *testing.T) {
+	for _, tc := range []struct{ opening, reply, mode string }{
+		{"envido", "decline", ""},
+		{"envido", "accept", ""},
+		{"ley_envido", "accept", "sin_ley"},
+		{"ley_envido", "accept", "con_ley"},
+	} {
+		t.Run(tc.opening+"/"+tc.reply+"/"+tc.mode, func(t *testing.T) {
+			responder := [3]rules.Card{{rules.Coins, 7}, {rules.Cups, 5}, {rules.Spades, 3}}
+			if tc.mode == "con_ley" {
+				responder = [3]rules.Card{{rules.Coins, 7}, {rules.Coins, 5}, {rules.Coins, 3}}
+			}
+			s := fixture(t, false, responder,
+				[3]rules.Card{{rules.Coins, 6}, {rules.Cups, 4}, {rules.Cups, 3}},
+				[3]rules.Card{{rules.Spades, 1}, {rules.Coins, 2}, {rules.Cups, 2}},
+				[3]rules.Card{{rules.Clubs, 7}, {rules.Clubs, 6}, {rules.Clubs, 5}})
+			s = apply(t, s, 1, rules.Command{Type: "call", Kind: tc.opening})
+			s = apply(t, s, 0, rules.Command{Type: "respond", Kind: tc.reply, Mode: tc.mode})
+			s = apply(t, s, 1, rules.Command{Type: "play", Card: 0})
+			s = apply(t, s, 2, rules.Command{Type: "play", Card: 0})
+			s = apply(t, s, 3, rules.Command{Type: "play", Card: 0, Declaration: "flor"})
+			s = apply(t, s, 0, rules.Command{Type: "call", Kind: "truco"})
+			s = apply(t, s, 1, rules.Command{Type: "respond", Kind: "decline"})
+			require.NotNil(t, s.LastHand)
+			want := []rules.Payout{{Kind: "flor", Team: 1, Points: 3}, {Kind: "truco", Team: 0, Points: 1}}
+			if tc.mode == "con_ley" {
+				want = append([]rules.Payout{{Kind: "envido", Team: 1, Points: 2}}, want...)
+				assert.Len(t, s.LastHand.EnvidoResults, 4)
+			} else {
+				assert.Empty(t, s.LastHand.EnvidoResults)
+			}
+			assert.Equal(t, want, s.LastHand.Payouts)
+		})
+	}
+}
+
+func TestOpponentsFlorOnFinalTrucoReplyCancelsRefusedEnvido(t *testing.T) {
+	s := fixture(t, false,
+		[3]rules.Card{{rules.Clubs, 7}, {rules.Clubs, 6}, {rules.Clubs, 5}},
+		[3]rules.Card{{rules.Cups, 7}, {rules.Coins, 6}, {rules.Cups, 5}})
+	s = apply(t, s, 1, rules.Command{Type: "call", Kind: "envido"})
+	s = apply(t, s, 0, rules.Command{Type: "respond", Kind: "decline"})
+	s = apply(t, s, 1, rules.Command{Type: "call", Kind: "truco"})
+	s = apply(t, s, 0, rules.Command{Type: "respond", Kind: "decline", Declaration: "con_mi_flor"})
+	assert.Equal(t, [2]int{3, 1}, s.Scores)
+}
+
 func TestDeclaredFlorRequiresExplicitLeyEnvidoForTheWholeTable(t *testing.T) {
 	for _, required := range []bool{false, true} {
 		for _, relation := range []string{"self", "opponent", "teammate", "burned"} {

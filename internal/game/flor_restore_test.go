@@ -78,3 +78,52 @@ func TestRestoreDistinguishesLegacyALeyFromConfirmedFlor(t *testing.T) {
 		}
 	}
 }
+
+func TestRestoreVoidsEnvidoOnlyForAFlorAfterTheWager(t *testing.T) {
+	for _, later := range []bool{false, true} {
+		t.Run(map[bool]string{false: "previous flor", true: "later flor"}[later], func(t *testing.T) {
+			state, err := rules.New(rules.Config{Players: 4, Target: 12}, 0, rules.Deck())
+			require.NoError(t, err)
+			state, _, err = rules.Apply(state, state.Turn, rules.Command{Type: "cut", Cut: 3})
+			require.NoError(t, err)
+			match := game.Match{Code: "FLOR-1234", Config: state.Config, State: &state,
+				Seats: []game.Seat{{ID: "ana"}, {ID: "beto"}, {ID: "carla"}, {ID: "daniel"}}}
+			play := func(seat int, cmd rules.Command) {
+				next, events, err := rules.Apply(state, seat, cmd)
+				require.NoError(t, err)
+				state = next
+				for _, event := range events {
+					match.CantoHistory = append(match.CantoHistory, game.GameEvent{Hand: state.HandNumber, Event: event})
+				}
+			}
+			announce := func() {
+				play(1, rules.Command{Type: "call", Kind: "truco"})
+				play(0, rules.Command{Type: "respond", Kind: "accept", Declaration: "con_mi_flor"})
+			}
+			if !later {
+				announce()
+			}
+			play(1, rules.Command{Type: "call", Kind: "ley_envido"})
+			play(2, rules.Command{Type: "respond", Kind: "accept", Mode: "sin_ley"})
+			wager := state.Envido
+			if later {
+				announce()
+				// Older saves retained the accepted wager after this declaration.
+				state.Envido, state.EnvidoAccepted, state.EnvidoCanceled = wager, true, false
+			}
+			state.EnvidoOpener = 0 // Missing in older snapshots.
+			payload, err := json.Marshal(match)
+			require.NoError(t, err)
+			host := game.New(&memoryRepository{payloads: map[string][]byte{match.Code: payload}}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+			require.NoError(t, host.Restore(t.Context()))
+			view, err := host.Snapshot(match.Code, "beto", 1)
+			require.NoError(t, err)
+			ley := rules.Command{Type: "call", Kind: "ley_envido"}
+			if later {
+				assert.Contains(t, view.State.Legal, ley)
+			} else {
+				assert.NotContains(t, view.State.Legal, ley)
+			}
+		})
+	}
+}

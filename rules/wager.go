@@ -85,6 +85,7 @@ func (s *State) call(seat int, c Command) error {
 		previous := *s.Pending
 		s.Suspended = &previous
 	}
+	s.EnvidoOpener = seat
 	s.Pending = &wager
 	return nil
 }
@@ -118,12 +119,12 @@ func (s *State) respond(seat int, c Command, automatic bool) error {
 		c.Mode == "sin_ley" && s.Ley && !s.ordinaryFlor(seat)) {
 		return fmt.Errorf("this response does not choose a ley mode")
 	}
-	if c.Kind == "flowers_no" {
+	if c.Kind == "flowers_no" || wager.Kind == "envido" && c.Kind == "decline" && declaresFlor(c.Declaration) {
 		if wager.Kind != "envido" || !s.Players[seat].FlorValid || s.Players[seat].Holding.Receta {
 			return fmt.Errorf("no ordinary flor to block envido")
 		}
 		s.Players[seat].FlorDeclared = true
-		s.EnvidoCanceled, s.EnvidoClosed = true, true
+		s.cancelEnvido()
 		s.resumeTruco()
 		return nil
 	}
@@ -214,6 +215,16 @@ func canRaiseTruco(from, to int) bool {
 		return from == 3 || from == 6 || from == 9
 	}
 	return false
+}
+
+func (s *State) envidoVoidedByFlor() bool {
+	return s.Envido.Kind == "envido" || s.Envido.Kind == "ley_envido" && !(s.EnvidoAccepted && s.Envido.Mode == "con_ley")
+}
+
+func (s *State) cancelEnvido() {
+	s.Envido = Wager{}
+	s.EnvidoAccepted, s.EnvidoWinner = false, -1
+	s.EnvidoClosed, s.EnvidoCanceled = true, true
 }
 
 func (s *State) resumeTruco() { s.Pending, s.Suspended = s.Suspended, nil }

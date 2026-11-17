@@ -40,7 +40,7 @@ func TestLeyEnvidoPreservesCallersFlorWhenTeammateDeclares(t *testing.T) {
 	}
 	s = apply(t, s, s.Turn, rules.Command{Type: "call", Kind: "truco", Declaration: "con_mi_flor"})
 	s = apply(t, s, 0, rules.Command{Type: "respond", Kind: "decline"})
-	assert.Equal(t, []rules.Payout{{Kind: "envido", Team: 1, Points: 2}, {Kind: "flor", Team: 1, Points: 6}, {Kind: "truco", Team: 1, Points: 1}}, s.Payouts)
+	assert.Equal(t, []rules.Payout{{Kind: "flor", Team: 1, Points: 6}, {Kind: "truco", Team: 1, Points: 1}}, s.Payouts)
 }
 
 func TestFlorPrefixDeclaresFlorForContestEligibility(t *testing.T) {
