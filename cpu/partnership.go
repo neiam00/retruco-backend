@@ -109,10 +109,17 @@ func (a *wagerAssessment) partnershipWagers(choices []rules.Command, trickWins i
 // is likelier to accept. Require both a credible holding and a positive margin.
 func (a *wagerAssessment) pricedOrdinaryOpening() bool {
 	odds := a.estimate()
-	// Allow for refusal equity, but require at least a 36% showdown chance
-	// and more than one tenth of a point after accounting for cancellations.
-	return shownTeamEnvido(a.view, a.seat) >= minimumOpeningPair && odds.ordinaryDeals > 0 &&
-		odds.ordinaryWins*100 >= 36*odds.ordinaryDeals && odds.openingValue > odds.envidoDeals*2
+	minPoints, minWinPercent, minReturn := minimumOpeningPair, 36, 2
+	v := a.view
+	if a.planTeamPlay && v.Round == 0 && v.Pending == nil &&
+		(!v.Seats[(a.seat+1)%4].Plays[0].Present || !v.Seats[(a.seat+3)%4].Plays[0].Present) {
+		// Checking lets a rival open into our partner. Take the two-point
+		// offer first with a known pair and a positive expected return.
+		// openingValue is measured in twentieths of a point per deal.
+		minPoints, minWinPercent, minReturn = 20, 30, 1
+	}
+	return odds.ordinaryDeals > 0 && shownTeamEnvido(v, a.seat) >= minPoints &&
+		100*odds.ordinaryWins >= minWinPercent*odds.ordinaryDeals && odds.openingValue > minReturn*odds.envidoDeals
 }
 
 // A preview and an exposed play can establish a partner's pair. A known pieza

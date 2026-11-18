@@ -92,6 +92,47 @@ func TestThirdSeatKeepsAceUnderPartnersPerica(t *testing.T) {
 	assert.Contains(t, cpu.PlayingChoices(v, 3), rules.Command{Type: "play", Card: 0})
 }
 
+func TestSaveAceWhenPartnerLeadsWithSevenOfCoins(t *testing.T) {
+	// One opponent has played a two and the other still has three cards.
+	// The seven usually holds. Spending the ace now gives up the next trick
+	// on too many of the same deals where the cheaper four works.
+	v := tableWithVira(t, 4, 2, [3]rules.Card{
+		{Suit: rules.Spades, Number: 1}, {Suit: rules.Coins, Number: 4}, {Suit: rules.Cups, Number: 5},
+	}, rules.Card{Suit: rules.Spades, Number: 7})
+	v.Mano = 0
+	v.Preview = &rules.Card{Suit: rules.Clubs, Number: 6}
+	v.Seats[0].Plays[0] = played(rules.Coins, 7)
+	v.Seats[1].Plays[0] = played(rules.Cups, 2)
+	v.Seats[0].Remaining, v.Seats[1].Remaining = 2, 2
+	ace := rules.Command{Type: "play", Card: 0}
+	require.Contains(t, cpu.ChoicesForProfile(v, 2, cpu.DeclaredFlorProfile), ace)
+	require.Equal(t, []rules.Command{{Type: "play", Card: 1}}, cpu.PlayingChoices(v, 2))
+	require.Contains(t, v.Legal, ace)
+}
+
+func TestTeamEnvidoPricesPassingTheOpeningToARival(t *testing.T) {
+	v := tableWithVira(t, 4, 1, [3]rules.Card{
+		{Suit: rules.Clubs, Number: 4}, {Suit: rules.Coins, Number: 2}, {Suit: rules.Coins, Number: 10},
+	}, rules.Card{Suit: rules.Cups, Number: 7})
+	bid := rules.Command{Type: "call", Kind: "envido"}
+	v.Legal = append(v.Legal, bid)
+	require.Equal(t, 22, v.Holding.Envido)
+	require.NotContains(t, cpu.ChoicesForProfile(v, 1, cpu.DeclaredFlorProfile), bid)
+	require.Equal(t, []rules.Command{bid}, cpu.PlayingChoices(v, 1))
+
+	// Playing last, the same pair is no longer protecting the partner
+	// against a later opposing envido. Apply the ordinary opening price.
+	v.Mano = 2
+	v.Seats[2].Plays[0] = played(rules.Clubs, 5)
+	v.Seats[3].Plays[0] = played(rules.Spades, 12)
+	v.Seats[0].Plays[0] = played(rules.Cups, 4)
+	for _, seat := range []int{2, 3, 0} {
+		v.Seats[seat].Remaining = 2
+	}
+	require.NotContains(t, cpu.PlayingChoices(v, 1), bid)
+	require.Contains(t, v.Legal, bid)
+}
+
 func TestValePartidaNeedsBothMatchContextAndCards(t *testing.T) {
 	strong := [3]rules.Card{{Suit: rules.Coins, Number: 11}, {Suit: rules.Coins, Number: 10}, {Suit: rules.Spades, Number: 1}}
 	weak := [3]rules.Card{{Suit: rules.Cups, Number: 4}, {Suit: rules.Spades, Number: 5}, {Suit: rules.Clubs, Number: 6}}

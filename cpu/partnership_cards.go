@@ -268,6 +268,53 @@ type forecastRow struct {
 	outcomes [(dealSamples + 63) / 64]uint64
 }
 
+// The last opposing seat has three unplayed cards. Count hands whose highest
+// card could tie or beat the partner but could still be covered by our card.
+func (d *publicDeal) likelyCover(vira rules.Card, partner, cover int) bool {
+	belowPartner, upToCover := 0, 0
+	for _, card := range d.pool[:d.available] {
+		rank := rules.Strength(card, vira)
+		if rank < partner {
+			belowPartner++
+		}
+		if rank <= cover {
+			upToCover++
+		}
+	}
+	hands := func(n int) int { return n * (n - 1) * (n - 2) / 6 }
+	return 3*(hands(upToCover)-hands(belowPartner)) >= hands(d.available)
+}
+
+func (a *wagerAssessment) inferiorTeamCard(card, best forecastRow, coverRank int, deal *publicDeal) bool {
+	gain := best.wins - card.wins
+	if gain <= 0 {
+		return false
+	}
+	cover := coverRank > 0 && card.move.kind == "play" && card.move.bottom > coverRank
+	minGainPercent, disagreementFactor := 4, 4
+	if a.planTeamPlay {
+		minGainPercent, disagreementFactor = 1, 1
+		if cover {
+			// Preserve insurance against a live last seat. For an unlikely
+			// cover, save the card only with a substantial whole-hand advantage.
+			if deal.likelyCover(*a.view.Vira, coverRank, card.move.bottom) {
+				return false
+			}
+			minGainPercent = 10
+		}
+	} else if cover {
+		return false
+	}
+	if gain*100 < minGainPercent*dealSamples {
+		return false
+	}
+	var disagreed int
+	for i := range card.outcomes {
+		disagreed += bits.OnesCount64(card.outcomes[i] ^ best.outcomes[i])
+	}
+	return gain*gain > disagreementFactor*disagreed
+}
+
 func (a *wagerAssessment) partnershipCards(choices []rules.Command) ([]rules.Command, int, bool) {
 	v, seat := a.view, a.seat
 	var ranks [3]int
@@ -338,10 +385,8 @@ func (a *wagerAssessment) partnershipCards(choices []rules.Command) ([]rules.Com
 			best = i
 		}
 	}
-	// A plausible cover over a leading teammate can matter against an unseen
-	// last opponent. Do not discard it just because our rollout policy prefers
-	// to save it for later. The earlier public dominance check removed covers
-	// that cannot help against any remaining opposing rank.
+	// A cover over a leading teammate can matter against the last opponent.
+	// Give those covers more room for uncertainty in the hand forecast.
 	partner := (seat + 2) % 4
 	coverRank := 0
 	if v.Round == 0 && (!base.present[0][(seat+1)%4] || !base.present[0][(seat+3)%4]) &&
@@ -366,13 +411,7 @@ func (a *wagerAssessment) partnershipCards(choices []rules.Command) ([]rules.Com
 		if m.kind != "" {
 			o := rows[indices[m]]
 			top := rows[groups[c.Declaration]]
-			gain := top.wins - o.wins
-			var diff int
-			for i := range o.outcomes {
-				diff += bits.OnesCount64(o.outcomes[i] ^ top.outcomes[i])
-			}
-			cover := coverRank > 0 && m.kind == "play" && m.bottom > coverRank
-			if !cover && gain*100 >= 4*dealSamples && gain*gain > 4*diff {
+			if a.inferiorTeamCard(o, top, coverRank, &d) {
 				continue
 			}
 		}

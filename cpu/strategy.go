@@ -7,7 +7,8 @@ import (
 )
 
 // PlayingProfile identifies the CPU choices used in live games and paired evaluations.
-const PlayingProfile = "value-and-team-v18"
+const PlayingProfile = "value-and-team-v19"
+const DeclaredFlorProfile = "value-and-team-v18"
 const TeamEnvidoProfile = "value-and-team-v17"
 const FinalCardRetrucoProfile = "value-and-team-v16"
 const FirstCardLeyProfile = "value-and-team-v15"
@@ -46,7 +47,7 @@ func PolicyChoices(v rules.View, seat int, profile string) ([]rules.Command, boo
 		v.Vira == nil || !v.Vira.Valid() || v.Holding == nil || len(v.Hand) != 3 || len(v.Seats) != n || len(v.Legal) < 2 {
 		return v.Legal, false
 	}
-	teamEnvido := profile == PlayingProfile || profile == TeamEnvidoProfile
+	teamEnvido := profile == PlayingProfile || profile == DeclaredFlorProfile || profile == TeamEnvidoProfile
 	finalCardRetruco := teamEnvido || profile == FinalCardRetrucoProfile
 	firstCardLey := finalCardRetruco || profile == FirstCardLeyProfile
 	deferFirstTruco := firstCardLey || profile == DeferredTrucoProfile
@@ -63,6 +64,7 @@ func PolicyChoices(v rules.View, seat int, profile string) ([]rules.Command, boo
 	e := wagerAssessment{view: v, seat: seat, priceOpening: n == 4 && referenceEnvido, revised: profile == HeadsUpCardProfile || capRaiseAtTarget,
 		capRaiseAtTarget: capRaiseAtTarget, capTruco: teamProfile && (n == 4 || pericoProfile)}
 	e.priceTeamStakes = teamEnvido && n == 4
+	e.planTeamPlay = profile == PlayingProfile && n == 4
 	e.deferFirstTruco = deferFirstTruco
 	e.reserveFirstTruco = reserveFirstTruco
 	e.selectOpening = n == 2 && selectOpening
@@ -179,6 +181,7 @@ func (a *wagerAssessment) protectFirstCard(leyOpening rules.Command) bool {
 }
 
 type wagerAssessment struct {
+	planTeamPlay                 bool
 	priceTeamStakes              bool
 	lastCardWins, lastCardLosses int
 	planLey                      bool
